@@ -1,10 +1,11 @@
 import SwiftUI
 import WebKit
 
-/// In-app Steam OpenID login. Intercepts the HTTPS return_to navigation so
-/// authentication works without relying on custom URL schemes (required for
-/// LiveContainer / sideload environments where ASWebAuthenticationSession
-/// callbacks often never reach the app).
+/// WKWebView Steam OpenID path for environments where ASWebAuthenticationSession
+/// custom-scheme callbacks cannot be delivered (e.g. LiveContainer).
+///
+/// Intercepts the HTTPS `return_to` navigation **before** the page loads,
+/// extracts OpenID query parameters natively, and never depends on page JS or MIME type.
 struct SteamLoginWebView: View {
     @EnvironmentObject var auth: SteamAuthenticationService
     @Environment(\.dismiss) private var dismiss
@@ -82,6 +83,27 @@ struct SteamOpenIDWebViewRepresentable: UIViewRepresentable {
             self.onFail = onFail
         }
 
+        /// Intercept **before** the return_to page is loaded.
+        private func shouldIntercept(_ url: URL) -> Bool {
+            if url.scheme?.lowercased() == SteamAuthenticationService.callbackScheme {
+                return true
+            }
+            if SteamAuthenticationService.isFinishedOpenIDAssertion(url) {
+                return true
+            }
+            if SteamAuthenticationService.isOpenIDReturnURL(url),
+               SteamAuthenticationService.isFinishedOpenIDAssertion(url) {
+                return true
+            }
+            return false
+        }
+
+        private func capture(_ url: URL) {
+            guard !didHandleCallback else { return }
+            didHandleCallback = true
+            onOpenIDCallback(url)
+        }
+
         func webView(
             _ webView: WKWebView,
             decidePolicyFor navigationAction: WKNavigationAction,
@@ -92,35 +114,35 @@ struct SteamOpenIDWebViewRepresentable: UIViewRepresentable {
                 return
             }
 
-            // Custom scheme (if bridge HTML ever redirects)
-            if url.scheme?.lowercased() == "wallpaperexporter" {
-                if !didHandleCallback {
-                    didHandleCallback = true
-                    onOpenIDCallback(url)
-                }
+            if shouldIntercept(url) {
+                capture(url)
                 decisionHandler(.cancel)
                 return
-            }
-
-            // HTTPS OpenID return_to — capture query params even if page is text/plain
-            if SteamAuthenticationService.isOpenIDReturnURL(url) {
-                if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-                   let items = components.queryItems,
-                   items.contains(where: { $0.name == "openid.claimed_id" }) {
-                    if !didHandleCallback {
-                        didHandleCallback = true
-                        onOpenIDCallback(url)
-                    }
-                    decisionHandler(.cancel)
-                    return
-                }
             }
 
             decisionHandler(.allow)
         }
 
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationResponse: WKNavigationResponse,
+            decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+        ) {
+            if let url = navigationResponse.response.url, shouldIntercept(url) {
+                capture(url)
+                decisionHandler(.cancel)
+                return
+            }
+            decisionHandler(.allow)
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            if let url = webView.url, shouldIntercept(url) {
+                capture(url)
+            }
+        }
+
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            // Ignore cancellation errors from our own .cancel decisions
             let ns = error as NSError
             if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled { return }
             if !didHandleCallback {
