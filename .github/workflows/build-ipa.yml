@@ -15,18 +15,25 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer || sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+        run: |
+          if [ -d /Applications/Xcode_15.4.app ]; then
+            sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+          elif [ -d /Applications/Xcode_16.app ]; then
+            sudo xcode-select -s /Applications/Xcode_16.app/Contents/Developer
+          else
+            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          fi
 
       - name: Show Xcode version
         run: xcodebuild -version
 
-      - name: Resolve packages / list schemes
+      - name: List schemes and targets
         run: |
-          xcodebuild -list -project WallpaperEngineExporter.xcodeproj || true
+          xcodebuild -list -project WallpaperEngineExporter.xcodeproj
 
       - name: Build for testing (simulator)
         run: |
-          set -o pipefail
+          set -euo pipefail
           xcodebuild \
             -project WallpaperEngineExporter.xcodeproj \
             -scheme WallpaperEngineExporter \
@@ -34,11 +41,12 @@ jobs:
             -configuration Debug \
             build-for-testing \
             CODE_SIGNING_ALLOWED=NO \
-            | xcpretty || true
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO
 
-      - name: Run tests
+      - name: Run unit tests
         run: |
-          set -o pipefail
+          set -euo pipefail
           xcodebuild \
             -project WallpaperEngineExporter.xcodeproj \
             -scheme WallpaperEngineExporter \
@@ -46,57 +54,184 @@ jobs:
             -configuration Debug \
             test \
             CODE_SIGNING_ALLOWED=NO \
-            || echo "Tests completed with warnings or environment limitations"
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO
 
-      - name: Archive (unsigned)
+      - name: Archive (unsigned – no signing secrets on CI)
         run: |
-          set -o pipefail
+          set -euo pipefail
+          mkdir -p build
           xcodebuild \
             -project WallpaperEngineExporter.xcodeproj \
             -scheme WallpaperEngineExporter \
             -configuration Release \
             -destination 'generic/platform=iOS' \
-            -archivePath $PWD/build/WallpaperEngineExporter.xcarchive \
+            -archivePath "$PWD/build/WallpaperEngineExporter.xcarchive" \
             archive \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
-            || echo "Archive step finished (signing limited on CI without secrets)"
+            DEVELOPMENT_TEAM=""
 
-      - name: Package IPA (Payload method)
+      - name: Locate real .app and package IPA
         run: |
-          mkdir -p Payload
-          if [ -d build/WallpaperEngineExporter.xcarchive/Products/Applications/WallpaperEngineExporter.app ]; then
-            cp -R build/WallpaperEngineExporter.xcarchive/Products/Applications/WallpaperEngineExporter.app Payload/
-          else
-            # Fallback: try to locate any .app produced
-            APP=$(find . -name "WallpaperEngineExporter.app" -type d | head -1)
-            if [ -n "$APP" ]; then
-              cp -R "$APP" Payload/
-            else
-              echo "No .app found – creating placeholder structure for CI validation"
-              mkdir -p Payload/WallpaperEngineExporter.app
-              echo "CFBundleIdentifier" > Payload/WallpaperEngineExporter.app/Info.plist
-            fi
+          set -euo pipefail
+
+          APP_PATH="build/WallpaperEngineExporter.xcarchive/Products/Applications/WallpaperEngineExporter.app"
+
+          if [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: Real .app not found at $APP_PATH"
+            echo "Archive contents:"
+            find build -type d -name "*.app" 2>/dev/null || true
+            find build -type d 2>/dev/null | head -50 || true
+            exit 1
           fi
+
+          echo "Found real application: $APP_PATH"
+          ls -la "$APP_PATH"
+
+          # Require executable
+          EXECUTABLE="$APP_PATH/WallpaperEngineExporter"
+          if [ ! -f "$EXECUTABLE" ]; then
+            # Some builds put the binary under a different name; search
+            EXECUTABLE=$(find "$APP_PATH" -type f -perm +111 -maxdepth 1 | head -1 || true)
+          fi
+          if [ -z "$EXECUTABLE" ] || [ ! -f "$EXECUTABLE" ]; then
+            echo "ERROR: No executable found inside the .app"
+            find "$APP_PATH" -maxdepth 2 -type f
+            exit 1
+          fi
+          echo "Executable: $EXECUTABLE"
+          file "$EXECUTABLE"
+          test -x "$EXECUTABLE" || chmod +x "$EXECUTABLE"
+
+          # Require Info.plist
+          if [ ! -f "$APP_PATH/Info.plist" ]; then
+            echo "ERROR: Info.plist missing"
+            exit 1
+          fi
+
+          # Extract and verify CFBundleIdentifier
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP_PATH/Info.plist" 2>/dev/null || true)
+          if [ -z "$BUNDLE_ID" ]; then
+            # Fallback for binary plists
+            BUNDLE_ID=$(plutil -extract CFBundleIdentifier raw "$APP_PATH/Info.plist" 2>/dev/null || true)
+          fi
+          if [ -z "$BUNDLE_ID" ]; then
+            echo "ERROR: Could not read CFBundleIdentifier from Info.plist"
+            exit 1
+          fi
+          echo "CFBundleIdentifier: $BUNDLE_ID"
+          if [[ "$BUNDLE_ID" != *"WallpaperEngineExporter"* ]] && [[ "$BUNDLE_ID" != *"itzprovenom"* ]]; then
+            echo "WARNING: Unexpected bundle id: $BUNDLE_ID"
+          fi
+
+          # Package genuine IPA
+          rm -rf Payload
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
           zip -r WallpaperEngineExporter.ipa Payload
+          rm -rf Payload
+
+          echo "IPA created:"
           ls -lh WallpaperEngineExporter.ipa
           file WallpaperEngineExporter.ipa
 
-      - name: Validate IPA structure
+      - name: Validate IPA (strict)
         run: |
-          echo "=== IPA Validation ==="
-          test -f WallpaperEngineExporter.ipa
-          unzip -l WallpaperEngineExporter.ipa | head -30
-          # Basic checks
-          unzip -l WallpaperEngineExporter.ipa | grep -q Payload/ || (echo "Missing Payload/" && exit 1)
-          unzip -l WallpaperEngineExporter.ipa | grep -q "\.app" || (echo "Missing .app" && exit 1)
-          echo "IPA basic structure OK"
-          ls -lh WallpaperEngineExporter.ipa
+          set -euo pipefail
 
-      - name: Upload IPA artifact
+          IPA=WallpaperEngineExporter.ipa
+
+          if [ ! -f "$IPA" ]; then
+            echo "ERROR: IPA file does not exist"
+            exit 1
+          fi
+
+          # Must be a valid zip
+          if ! unzip -t "$IPA" > /dev/null; then
+            echo "ERROR: IPA is not a valid ZIP archive"
+            exit 1
+          fi
+
+          # Size check – genuine app should not be tiny
+          SIZE=$(stat -f%z "$IPA" 2>/dev/null || stat -c%s "$IPA")
+          echo "IPA size: $SIZE bytes"
+          if [ "$SIZE" -lt 50000 ]; then
+            echo "ERROR: IPA is suspiciously small ($SIZE bytes). Likely incomplete."
+            exit 1
+          fi
+
+          echo "=== IPA contents (first 40 entries) ==="
+          unzip -l "$IPA" | head -40
+
+          # Required structure
+          unzip -l "$IPA" | grep -q "Payload/.*\.app/" || {
+            echo "ERROR: Missing Payload/*.app/"
+            exit 1
+          }
+
+          # Extract for deeper checks
+          rm -rf /tmp/ipa_check
+          mkdir -p /tmp/ipa_check
+          unzip -q "$IPA" -d /tmp/ipa_check
+
+          APP_IN_IPA=$(find /tmp/ipa_check/Payload -name "*.app" -type d | head -1)
+          if [ -z "$APP_IN_IPA" ]; then
+            echo "ERROR: No .app directory inside Payload"
+            exit 1
+          fi
+          echo "App inside IPA: $APP_IN_IPA"
+
+          if [ ! -f "$APP_IN_IPA/Info.plist" ]; then
+            echo "ERROR: Info.plist missing inside IPA .app"
+            exit 1
+          fi
+
+          # Executable must exist and be a Mach-O binary
+          EXEC=$(find "$APP_IN_IPA" -type f -perm +111 -maxdepth 1 | head -1 || true)
+          if [ -z "$EXEC" ]; then
+            EXEC="$APP_IN_IPA/WallpaperEngineExporter"
+          fi
+          if [ ! -f "$EXEC" ]; then
+            echo "ERROR: Executable missing inside IPA .app"
+            find "$APP_IN_IPA" -maxdepth 2 -type f
+            exit 1
+          fi
+          echo "Executable inside IPA: $EXEC"
+          file "$EXEC"
+          file "$EXEC" | grep -qi "Mach-O\|executable" || {
+            echo "ERROR: Executable does not appear to be a Mach-O binary"
+            exit 1
+          }
+
+          # Bundle identifier again
+          BID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP_IN_IPA/Info.plist" 2>/dev/null \
+            || plutil -extract CFBundleIdentifier raw "$APP_IN_IPA/Info.plist" 2>/dev/null \
+            || echo "")
+          if [ -z "$BID" ]; then
+            echo "ERROR: CFBundleIdentifier could not be read from IPA Info.plist"
+            exit 1
+          fi
+          echo "Validated CFBundleIdentifier: $BID"
+
+          # Basic resource presence
+          if [ ! -d "$APP_IN_IPA" ]; then
+            echo "ERROR: App bundle incomplete"
+            exit 1
+          fi
+
+          echo "=== IPA VALIDATION PASSED ==="
+          echo "Size: $(ls -lh "$IPA" | awk '{print $5}')"
+          echo "Bundle ID: $BID"
+          echo "Note: This IPA is UNSIGNED (CODE_SIGNING_ALLOWED=NO). Suitable for CI validation only."
+
+          rm -rf /tmp/ipa_check
+
+      - name: Upload IPA artifact (unsigned)
         uses: actions/upload-artifact@v4
         with:
-          name: WallpaperEngineExporter-IPA
+          name: WallpaperEngineExporter-IPA-unsigned
           path: WallpaperEngineExporter.ipa
           retention-days: 14
+          if-no-files-found: error
