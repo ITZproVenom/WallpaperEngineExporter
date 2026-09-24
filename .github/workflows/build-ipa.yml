@@ -28,6 +28,7 @@ jobs:
           test "$LINES" -gt 400
           grep -q "PBXNativeTarget" WallpaperEngineExporter.xcodeproj/project.pbxproj
           grep -q "SteamLoginWebView" WallpaperEngineExporter.xcodeproj/project.pbxproj
+          grep -q 'DEVELOPMENT_TEAM = ""' WallpaperEngineExporter.xcodeproj/project.pbxproj
           xcodebuild -list -project WallpaperEngineExporter.xcodeproj
 
       - name: Select Xcode
@@ -59,14 +60,14 @@ jobs:
             fi
           done
           if [ -z "$DEST" ]; then
-            DEST="generic/platform=iOS Simulator"
+            echo "ERROR: No iPhone simulator available"
+            xcrun simctl list devices available || true
+            exit 1
           fi
           echo "Using destination: $DEST"
           echo "dest=$DEST" >> "$GITHUB_OUTPUT"
 
       - name: Build for testing (simulator)
-        continue-on-error: true
-        id: simbuild
         run: |
           set -euo pipefail
           xcodebuild \
@@ -80,14 +81,9 @@ jobs:
             CODE_SIGNING_REQUIRED=NO
 
       - name: Run unit tests
-        continue-on-error: true
         id: tests
         run: |
           set -euo pipefail
-          if [ "${{ steps.simbuild.outcome }}" != "success" ]; then
-            echo "status=skipped" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           xcodebuild \
             -project WallpaperEngineExporter.xcodeproj \
             -scheme WallpaperEngineExporter \
@@ -99,30 +95,10 @@ jobs:
             CODE_SIGNING_REQUIRED=NO
           echo "status=passed" >> "$GITHUB_OUTPUT"
 
-      - name: Build Release simulator app (packaging fallback)
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          mkdir -p build/SimDerived
-          DEST="${{ steps.sim.outputs.dest }}"
-          xcodebuild \
-            -project WallpaperEngineExporter.xcodeproj \
-            -scheme WallpaperEngineExporter \
-            -configuration Release \
-            -destination "$DEST" \
-            -derivedDataPath "$PWD/build/SimDerived" \
-            build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO
-
-      - name: Build Release (unsigned device)
-        id: devicebuild
-        continue-on-error: true
+      - name: Archive (unsigned device – real iOS arm64)
         run: |
           set -euo pipefail
           mkdir -p build
-          set +e
           xcodebuild \
             -project WallpaperEngineExporter.xcodeproj \
             -scheme WallpaperEngineExporter \
@@ -133,53 +109,24 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
-            DEVELOPMENT_TEAM="" \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES \
-            ONLY_ACTIVE_ARCH=NO
-          ARCHIVE_RC=$?
-          if [ "$ARCHIVE_RC" -ne 0 ]; then
-            echo "Archive failed (rc=$ARCHIVE_RC) — trying build -sdk iphoneos"
-            xcodebuild \
-              -project WallpaperEngineExporter.xcodeproj \
-              -scheme WallpaperEngineExporter \
-              -configuration Release \
-              -sdk iphoneos \
-              -derivedDataPath "$PWD/build/DerivedData" \
-              build \
-              CODE_SIGNING_ALLOWED=NO \
-              CODE_SIGN_IDENTITY="" \
-              CODE_SIGNING_REQUIRED=NO \
-              DEVELOPMENT_TEAM="" \
-              AD_HOC_CODE_SIGNING_ALLOWED=YES \
-              ONLY_ACTIVE_ARCH=NO
-          fi
-          set -e
+            DEVELOPMENT_TEAM=""
 
-      - name: Locate real .app and package IPA
+      - name: Locate real .app, validate arm64, package IPA
         run: |
           set -euo pipefail
 
-          APP_PATH=""
-          if [ -d "build/WallpaperEngineExporter.xcarchive/Products/Applications/WallpaperEngineExporter.app" ]; then
-            APP_PATH="build/WallpaperEngineExporter.xcarchive/Products/Applications/WallpaperEngineExporter.app"
-          fi
-          if [ -z "$APP_PATH" ]; then
-            APP_PATH=$(find build/DerivedData -type d -name "WallpaperEngineExporter.app" 2>/dev/null | head -1 || true)
-          fi
-          if [ -z "$APP_PATH" ]; then
-            APP_PATH=$(find build/SimDerived -type d -name "WallpaperEngineExporter.app" 2>/dev/null | head -1 || true)
-          fi
-          if [ -z "$APP_PATH" ]; then
-            APP_PATH=$(find build -type d -name "WallpaperEngineExporter.app" 2>/dev/null | head -1 || true)
-          fi
-          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
-            echo "ERROR: WallpaperEngineExporter.app not found"
+          APP_PATH="build/WallpaperEngineExporter.xcarchive/Products/Applications/WallpaperEngineExporter.app"
+
+          if [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: Real device .app not found at $APP_PATH"
+            echo "Archive contents:"
             find build -type d -name "*.app" 2>/dev/null || true
+            find build -type d 2>/dev/null | head -50 || true
             exit 1
           fi
-          echo "Found app at $APP_PATH"
+
+          echo "Found real application: $APP_PATH"
           ls -la "$APP_PATH"
-          file "$APP_PATH/WallpaperEngineExporter" 2>/dev/null || true
 
           EXECUTABLE="$APP_PATH/WallpaperEngineExporter"
           if [ ! -f "$EXECUTABLE" ]; then
@@ -192,6 +139,18 @@ jobs:
           fi
           echo "Executable: $EXECUTABLE"
           file "$EXECUTABLE"
+
+          FILE_INFO=$(file "$EXECUTABLE")
+          echo "$FILE_INFO"
+          if echo "$FILE_INFO" | grep -qi 'simulator'; then
+            echo "ERROR: Executable is a simulator binary — refusing to package as device IPA"
+            exit 1
+          fi
+          if ! echo "$FILE_INFO" | grep -q 'arm64'; then
+            echo "ERROR: Executable is not arm64 — refusing to package"
+            exit 1
+          fi
+
           test -x "$EXECUTABLE" || chmod +x "$EXECUTABLE"
 
           if [ ! -f "$APP_PATH/Info.plist" ]; then
@@ -228,6 +187,22 @@ jobs:
           echo "IPA: $IPA ($IPA_SIZE)"
           echo "SHA-256: $IPA_SHA"
 
+          rm -rf build/ipa_check
+          mkdir -p build/ipa_check
+          unzip -q "$IPA" -d build/ipa_check
+          IPA_EXEC=$(find build/ipa_check/Payload -type f -name WallpaperEngineExporter | head -1)
+          test -f "$IPA_EXEC"
+          IPA_FILE=$(file "$IPA_EXEC")
+          echo "IPA executable: $IPA_FILE"
+          if echo "$IPA_FILE" | grep -qi simulator; then
+            echo "ERROR: IPA contains simulator binary"
+            exit 1
+          fi
+          if ! echo "$IPA_FILE" | grep -q arm64; then
+            echo "ERROR: IPA executable is not arm64"
+            exit 1
+          fi
+
           echo "IPA_PATH=$IPA" >> "$GITHUB_ENV"
           echo "IPA_SIZE=$IPA_SIZE" >> "$GITHUB_ENV"
           echo "IPA_SHA=$IPA_SHA" >> "$GITHUB_ENV"
@@ -260,7 +235,7 @@ jobs:
           COMMIT_SHA="${{ github.sha }}"
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
-          NOTES=$(cat <<EOF
+          NOTES=$(cat <<ENDNOTES
           ## Wallpaper Engine Exporter ${SHORT_VER} (build ${BUILD_VER})
 
           Automated CI build. This IPA is **unsigned** and is intended for CI validation and inspection only. It will **not** install on devices without proper signing.
@@ -271,31 +246,40 @@ jobs:
           | Build | ${BUILD_VER} |
           | Tag | \`${TAG}\` |
           | Commit | \`${COMMIT_SHA}\` |
-          | Tests | ${{ steps.tests.outputs.status || 'skipped' }} |
+          | Tests | ${{ steps.tests.outputs.status }} |
           | IPA size | ${IPA_SIZE} |
           | SHA-256 | \`${IPA_SHA}\` |
           | Bundle ID | \`${BUNDLE_ID}\` |
-          | Signing | **Unsigned** |
+          | Architecture | **arm64 device** (strict validation) |
+          | Signing | **Unsigned** (CODE_SIGNING_ALLOWED=NO) |
           | Workflow | [run](${RUN_URL}) |
 
           ### Steam auth (build 17)
 
-          Dual-path OpenID: ASWebAuthenticationSession + WKWebView intercept of HTTPS return_to (no jsDelivr dependency for success).
+          Dual-path OpenID: ASWebAuthenticationSession + WKWebView intercept of HTTPS return_to.
 
           ### Asset
 
-          - \`WallpaperEngineExporter.ipa\`
-          EOF
+          - \`WallpaperEngineExporter.ipa\` — real iOS arm64 app, validated by CI
+          ENDNOTES
           )
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES"
+            echo "Release $TAG already exists — updating notes and replacing IPA asset"
+            gh release edit "$TAG" \
+              --title "$TITLE" \
+              --notes "$NOTES"
             if gh release view "$TAG" --json assets -q '.assets[].name' 2>/dev/null | grep -qx 'WallpaperEngineExporter.ipa'; then
               gh release delete-asset "$TAG" WallpaperEngineExporter.ipa --yes || true
             fi
             gh release upload "$TAG" "$IPA" --clobber
           else
-            gh release create "$TAG" "$IPA" --title "$TITLE" --notes "$NOTES" --target "${{ github.sha }}"
+            echo "Creating new release $TAG"
+            gh release create "$TAG" "$IPA" \
+              --title "$TITLE" \
+              --notes "$NOTES" \
+              --target "${{ github.sha }}"
           fi
 
+          echo "Release published:"
           gh release view "$TAG" --json url,tagName,assets -q '{url: .url, tag: .tagName, assets: [.assets[].name]}'
