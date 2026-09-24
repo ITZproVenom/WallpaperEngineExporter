@@ -7,6 +7,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-14
@@ -45,6 +48,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO
 
       - name: Run unit tests
+        id: tests
         run: |
           set -euo pipefail
           xcodebuild \
@@ -56,6 +60,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO
+          echo "status=passed" >> "$GITHUB_OUTPUT"
 
       - name: Archive (unsigned – no signing secrets on CI)
         run: |
@@ -93,7 +98,6 @@ jobs:
           # Require executable
           EXECUTABLE="$APP_PATH/WallpaperEngineExporter"
           if [ ! -f "$EXECUTABLE" ]; then
-            # Some builds put the binary under a different name; search
             EXECUTABLE=$(find "$APP_PATH" -type f -perm +111 -maxdepth 1 | head -1 || true)
           fi
           if [ -z "$EXECUTABLE" ] || [ ! -f "$EXECUTABLE" ]; then
@@ -114,7 +118,6 @@ jobs:
           # Extract and verify CFBundleIdentifier
           BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP_PATH/Info.plist" 2>/dev/null || true)
           if [ -z "$BUNDLE_ID" ]; then
-            # Fallback for binary plists
             BUNDLE_ID=$(plutil -extract CFBundleIdentifier raw "$APP_PATH/Info.plist" 2>/dev/null || true)
           fi
           if [ -z "$BUNDLE_ID" ]; then
@@ -122,9 +125,6 @@ jobs:
             exit 1
           fi
           echo "CFBundleIdentifier: $BUNDLE_ID"
-          if [[ "$BUNDLE_ID" != *"WallpaperEngineExporter"* ]] && [[ "$BUNDLE_ID" != *"itzprovenom"* ]]; then
-            echo "WARNING: Unexpected bundle id: $BUNDLE_ID"
-          fi
 
           # Package genuine IPA
           rm -rf Payload
@@ -138,6 +138,7 @@ jobs:
           file WallpaperEngineExporter.ipa
 
       - name: Validate IPA (strict)
+        id: validate
         run: |
           set -euo pipefail
 
@@ -205,7 +206,7 @@ jobs:
             exit 1
           }
 
-          # Bundle identifier again
+          # Bundle identifier
           BID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP_IN_IPA/Info.plist" 2>/dev/null \
             || plutil -extract CFBundleIdentifier raw "$APP_IN_IPA/Info.plist" 2>/dev/null \
             || echo "")
@@ -215,16 +216,32 @@ jobs:
           fi
           echo "Validated CFBundleIdentifier: $BID"
 
-          # Basic resource presence
-          if [ ! -d "$APP_IN_IPA" ]; then
-            echo "ERROR: App bundle incomplete"
-            exit 1
-          fi
+          # Version from built app
+          SHORT_VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_IN_IPA/Info.plist" 2>/dev/null \
+            || plutil -extract CFBundleShortVersionString raw "$APP_IN_IPA/Info.plist" 2>/dev/null \
+            || echo "1.0.0")
+          BUILD_VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP_IN_IPA/Info.plist" 2>/dev/null \
+            || plutil -extract CFBundleVersion raw "$APP_IN_IPA/Info.plist" 2>/dev/null \
+            || echo "1")
+
+          SHA256=$(shasum -a 256 "$IPA" | awk '{print $1}')
+          HUMAN_SIZE=$(ls -lh "$IPA" | awk '{print $5}')
 
           echo "=== IPA VALIDATION PASSED ==="
-          echo "Size: $(ls -lh "$IPA" | awk '{print $5}')"
+          echo "Size: $HUMAN_SIZE ($SIZE bytes)"
+          echo "SHA-256: $SHA256"
           echo "Bundle ID: $BID"
+          echo "Version: $SHORT_VER build $BUILD_VER"
           echo "Note: This IPA is UNSIGNED (CODE_SIGNING_ALLOWED=NO). Suitable for CI validation only."
+
+          # Persist for later steps
+          echo "ipa_size_bytes=$SIZE" >> "$GITHUB_OUTPUT"
+          echo "ipa_size_human=$HUMAN_SIZE" >> "$GITHUB_OUTPUT"
+          echo "ipa_sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "bundle_id=$BID" >> "$GITHUB_OUTPUT"
+          echo "short_version=$SHORT_VER" >> "$GITHUB_OUTPUT"
+          echo "build_version=$BUILD_VER" >> "$GITHUB_OUTPUT"
+          echo "release_tag=v${SHORT_VER}-build${BUILD_VER}" >> "$GITHUB_OUTPUT"
 
           rm -rf /tmp/ipa_check
 
@@ -235,3 +252,153 @@ jobs:
           path: WallpaperEngineExporter.ipa
           retention-days: 14
           if-no-files-found: error
+
+      - name: Pre-release safety re-check
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          IPA=WallpaperEngineExporter.ipa
+
+          if [ ! -f "$IPA" ]; then
+            echo "ERROR: IPA missing before release"
+            exit 1
+          fi
+
+          SIZE=$(stat -f%z "$IPA" 2>/dev/null || stat -c%s "$IPA")
+          EXPECTED_SIZE="${{ steps.validate.outputs.ipa_size_bytes }}"
+          if [ "$SIZE" != "$EXPECTED_SIZE" ]; then
+            echo "ERROR: IPA size changed after validation ($SIZE vs $EXPECTED_SIZE)"
+            exit 1
+          fi
+
+          SHA=$(shasum -a 256 "$IPA" | awk '{print $1}')
+          EXPECTED_SHA="${{ steps.validate.outputs.ipa_sha256 }}"
+          if [ "$SHA" != "$EXPECTED_SHA" ]; then
+            echo "ERROR: IPA SHA-256 mismatch after validation"
+            echo "Current:  $SHA"
+            echo "Expected: $EXPECTED_SHA"
+            exit 1
+          fi
+
+          if ! unzip -t "$IPA" > /dev/null; then
+            echo "ERROR: IPA is not a valid ZIP before release"
+            exit 1
+          fi
+
+          unzip -l "$IPA" | grep -q "Payload/.*\.app/" || {
+            echo "ERROR: Missing Payload/*.app/ before release"
+            exit 1
+          }
+
+          rm -rf /tmp/ipa_release_check
+          mkdir -p /tmp/ipa_release_check
+          unzip -q "$IPA" -d /tmp/ipa_release_check
+          APP=$(find /tmp/ipa_release_check/Payload -name "*.app" -type d | head -1)
+          if [ -z "$APP" ] || [ ! -f "$APP/Info.plist" ]; then
+            echo "ERROR: App or Info.plist missing before release"
+            exit 1
+          fi
+          EXEC=$(find "$APP" -type f -perm +111 -maxdepth 1 | head -1 || true)
+          if [ -z "$EXEC" ]; then
+            EXEC="$APP/WallpaperEngineExporter"
+          fi
+          if [ ! -f "$EXEC" ]; then
+            echo "ERROR: Executable missing before release"
+            exit 1
+          fi
+          file "$EXEC" | grep -qi "Mach-O\|executable" || {
+            echo "ERROR: Executable is not Mach-O before release"
+            exit 1
+          }
+          BID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist" 2>/dev/null \
+            || plutil -extract CFBundleIdentifier raw "$APP/Info.plist" 2>/dev/null \
+            || echo "")
+          if [ -z "$BID" ]; then
+            echo "ERROR: CFBundleIdentifier missing before release"
+            exit 1
+          fi
+
+          echo "Pre-release checks passed. SHA-256=$SHA Size=$SIZE"
+          rm -rf /tmp/ipa_release_check
+
+      - name: Create or update GitHub Release (unsigned CI build)
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          IPA=WallpaperEngineExporter.ipa
+          TAG="${{ steps.validate.outputs.release_tag }}"
+          SHORT_VER="${{ steps.validate.outputs.short_version }}"
+          BUILD_VER="${{ steps.validate.outputs.build_version }}"
+          IPA_SIZE="${{ steps.validate.outputs.ipa_size_human }}"
+          IPA_SHA="${{ steps.validate.outputs.ipa_sha256 }}"
+          BUNDLE_ID="${{ steps.validate.outputs.bundle_id }}"
+          COMMIT_SHA="${{ github.sha }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          TITLE="v${SHORT_VER} (build ${BUILD_VER}) — Unsigned CI build"
+
+          NOTES=$(cat <<EOF
+          ## Wallpaper Engine Exporter — Unsigned CI build
+
+          **This release contains an UNSIGNED IPA** produced by GitHub Actions without Apple code-signing certificates.
+          It is intended for CI validation and inspection only. It will **not** install on devices without proper signing.
+
+          | Field | Value |
+          |-------|-------|
+          | Version | ${SHORT_VER} |
+          | Build | ${BUILD_VER} |
+          | Tag | \`${TAG}\` |
+          | Commit | \`${COMMIT_SHA}\` |
+          | Tests | passed |
+          | IPA size | ${IPA_SIZE} |
+          | SHA-256 | \`${IPA_SHA}\` |
+          | Bundle ID | \`${BUNDLE_ID}\` |
+          | Signing | **Unsigned** (CODE_SIGNING_ALLOWED=NO) |
+          | Workflow | [run](${RUN_URL}) |
+
+          ### Supported wallpaper types
+
+          | Type | Detection | Preview | Export to MP4 |
+          |------|-----------|---------|---------------|
+          | Video | Yes | Yes | Yes (full) |
+          | Scene | Yes | Limited | Embedded video only |
+          | Web | Yes | WKWebView | Embedded video only |
+          | Application | Yes | No | Embedded video only |
+
+          ### Known limitations
+
+          - iOS cannot access desktop Steam workshop paths.
+          - No direct Steam Workshop package download to iOS.
+          - Scene / Web / Application wallpapers cannot be fully rendered on iOS.
+          - This IPA is **not signed** and cannot be installed on devices without your own Apple Developer credentials.
+
+          ### Asset
+
+          - \`WallpaperEngineExporter.ipa\` — exact IPA validated by CI (same SHA-256 as above)
+          EOF
+          )
+
+          # Create or update release without failing on existing tag
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — updating notes and replacing IPA asset"
+            gh release edit "$TAG" \
+              --title "$TITLE" \
+              --notes "$NOTES"
+            # Remove existing asset if present, then upload fresh IPA
+            if gh release view "$TAG" --json assets -q '.assets[].name' 2>/dev/null | grep -qx 'WallpaperEngineExporter.ipa'; then
+              gh release delete-asset "$TAG" WallpaperEngineExporter.ipa --yes || true
+            fi
+            gh release upload "$TAG" "$IPA" --clobber
+          else
+            echo "Creating new release $TAG"
+            gh release create "$TAG" "$IPA" \
+              --title "$TITLE" \
+              --notes "$NOTES" \
+              --target "${{ github.sha }}"
+          fi
+
+          echo "Release published:"
+          gh release view "$TAG" --json url,tagName,assets -q '{url: .url, tag: .tagName, assets: [.assets[].name]}'
