@@ -9,15 +9,12 @@ final class SteamWorkshopService: ObservableObject {
     @Published var lastError: String?
 
     private let storageKey = "imported_workshop_items"
-    private let appID = 431960
 
     init() {
         loadPersisted()
     }
 
     func refreshLibrary(for steamID: String) async {
-        // Direct listing of private subscriptions requires Steam Web API key + backend.
-        // Public metadata for known IDs remains available via fetchItemMetadata.
         isLoading = false
         lastError = nil
     }
@@ -38,8 +35,6 @@ final class SteamWorkshopService: ObservableObject {
             return
         }
 
-        // Free-text Workshop search requires Steam Web API (IPublishedFileService/QueryFiles) with an API key.
-        // Without a key we cannot perform server-side search from a pure client.
         searchResults = []
         lastError = "Text search requires a Steam Web API key. Paste a Workshop URL or ID instead."
     }
@@ -52,9 +47,10 @@ final class SteamWorkshopService: ObservableObject {
         return await fetchItemMetadata(id: id)
     }
 
-    /// Fetch public Workshop item metadata from the Steam Community page (no API key).
     func fetchItemMetadata(id: String) async -> WorkshopItem? {
-        let url = URL(string: "https://steamcommunity.com/sharedfiles/filedetails/?id=\(id)")!
+        guard let url = URL(string: "https://steamcommunity.com/sharedfiles/filedetails/?id=\(id)") else {
+            return nil
+        }
         do {
             var request = URLRequest(url: url)
             request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)", forHTTPHeaderField: "User-Agent")
@@ -70,27 +66,31 @@ final class SteamWorkshopService: ObservableObject {
     }
 
     private func parseWorkshopHTML(html: String, id: String) -> WorkshopItem {
-        let title = extractMeta(html, property: "og:title")
+        let title = extractMetaContent(html, property: "og:title")
             ?? extractBetween(html, start: "<div class=\"workshopItemTitle\">", end: "</div>")
             ?? "Workshop Item \(id)"
 
-        let image = extractMeta(html, property: "og:image")
-        let description = extractMeta(html, property: "og:description")
+        let image = extractMetaContent(html, property: "og:image")
+        let description = extractMetaContent(html, property: "og:description")
 
         var author: String?
         if let range = html.range(of: "class=\"friendBlockContent\"") {
             let slice = String(html[range.upperBound...].prefix(200))
-            author = slice.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty }
+            author = slice.components(separatedBy: "\n")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first { !$0.isEmpty }
         }
 
-        // Type heuristics from page text
         var type: WallpaperType = .unknown
         let lower = html.lowercased()
-        if lower.contains("type:</") || lower.contains(">video<") {
-            if lower.contains(">video<") || lower.contains("video wallpaper") { type = .video }
-            else if lower.contains(">scene<") || lower.contains("scene wallpaper") { type = .scene }
-            else if lower.contains(">web<") || lower.contains("web wallpaper") { type = .web }
-            else if lower.contains(">application<") { type = .application }
+        if lower.contains(">video<") || lower.contains("video wallpaper") {
+            type = .video
+        } else if lower.contains(">scene<") || lower.contains("scene wallpaper") {
+            type = .scene
+        } else if lower.contains(">web<") || lower.contains("web wallpaper") {
+            type = .web
+        } else if lower.contains(">application<") {
+            type = .application
         }
 
         return WorkshopItem(
@@ -110,21 +110,37 @@ final class SteamWorkshopService: ObservableObject {
         )
     }
 
-    private func extractMeta(_ html: String, property: String) -> String? {
-        let patterns = [
-            "property=\"\(property)\" content=\"([^"]+)\"",
-            "content=\"([^"]+)\" property=\"\(property)\""
-        ]
-        for p in patterns {
-            if let regex = try? NSRegularExpression(pattern: p),
-               let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
-               let r = Range(match.range(at: 1), in: html) {
-                return String(html[r])
-                    .replacingOccurrences(of: "&amp;", with: "&")
-                    .replacingOccurrences(of: "&quot;", with: "\"")
-            }
+    private func extractMetaContent(_ html: String, property: String) -> String? {
+        // Look for: property="og:title" content="..."
+        let marker = "property=\"\(property)\""
+        guard let propRange = html.range(of: marker) else {
+            // Alternate order: content=... property=
+            let alt = "property=\"\(property)\""
+            _ = alt
+            return extractContentNearProperty(html, property: property)
         }
-        return nil
+        let windowStart = html.index(propRange.lowerBound, offsetBy: -80, limitedBy: html.startIndex) ?? html.startIndex
+        let windowEnd = html.index(propRange.upperBound, offsetBy: 200, limitedBy: html.endIndex) ?? html.endIndex
+        let window = String(html[windowStart..<windowEnd])
+        return extractQuotedContent(from: window)
+    }
+
+    private func extractContentNearProperty(_ html: String, property: String) -> String? {
+        guard let range = html.range(of: "property=\"\(property)\"") else { return nil }
+        let start = html.index(range.lowerBound, offsetBy: -100, limitedBy: html.startIndex) ?? html.startIndex
+        let end = html.index(range.upperBound, offsetBy: 150, limitedBy: html.endIndex) ?? html.endIndex
+        return extractQuotedContent(from: String(html[start..<end]))
+    }
+
+    private func extractQuotedContent(from window: String) -> String? {
+        guard let contentKey = window.range(of: "content=\"") else { return nil }
+        let after = window[contentKey.upperBound...]
+        guard let endQuote = after.firstIndex(of: "\"") else { return nil }
+        let value = String(after[..<endQuote])
+        return value
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
     }
 
     private func extractBetween(_ html: String, start: String, end: String) -> String? {
