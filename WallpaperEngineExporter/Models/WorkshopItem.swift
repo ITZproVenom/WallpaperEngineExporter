@@ -1,6 +1,6 @@
 import Foundation
 
-enum WallpaperType: String, Codable, CaseIterable {
+enum WallpaperType: String, Codable, CaseIterable, Hashable {
     case video
     case scene
     case web
@@ -22,7 +22,7 @@ enum WallpaperType: String, Codable, CaseIterable {
     }
 }
 
-struct WorkshopItem: Identifiable, Codable, Equatable {
+struct WorkshopItem: Identifiable, Codable, Equatable, Hashable {
     let id: String               // Workshop file ID
     let title: String
     let author: String?
@@ -37,7 +37,7 @@ struct WorkshopItem: Identifiable, Codable, Equatable {
     var localPath: URL?          // after import
     var availability: AvailabilityStatus
 
-    enum AvailabilityStatus: String, Codable {
+    enum AvailabilityStatus: String, Codable, Hashable {
         case metadataOnly
         case imported
         case readyToExport

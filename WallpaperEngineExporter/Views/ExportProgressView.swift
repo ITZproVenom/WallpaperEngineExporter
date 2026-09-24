@@ -40,7 +40,7 @@ struct ExportProgressView: View {
                     .foregroundStyle(.secondary)
             }
             if let remaining = progress.estimatedRemaining {
-                Text("~\(Int(remaining))s remaining")
+                Text("~\(Int(remaining))s remaining")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
