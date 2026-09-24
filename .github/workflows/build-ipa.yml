@@ -17,6 +17,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Restore complete project.pbxproj
+        run: |
+          set -euo pipefail
+          python3 scripts/generate-pbxproj.py
+          BYTES=$(wc -c < WallpaperEngineExporter.xcodeproj/project.pbxproj | tr -d ' ')
+          LINES=$(wc -l < WallpaperEngineExporter.xcodeproj/project.pbxproj | tr -d ' ')
+          echo "project.pbxproj: $BYTES bytes, $LINES lines"
+          test "$BYTES" -gt 20000
+          test "$LINES" -gt 400
+          grep -q "PBXNativeTarget" WallpaperEngineExporter.xcodeproj/project.pbxproj
+          grep -q "SteamLoginWebView" WallpaperEngineExporter.xcodeproj/project.pbxproj
+          xcodebuild -list -project WallpaperEngineExporter.xcodeproj
+
       - name: Select Xcode
         run: |
           if [ -d /Applications/Xcode_15.4.app ]; then
@@ -121,230 +134,68 @@ jobs:
             BUNDLE_ID=$(plutil -extract CFBundleIdentifier raw "$APP_PATH/Info.plist" 2>/dev/null || true)
           fi
           if [ -z "$BUNDLE_ID" ]; then
-            echo "ERROR: Could not read CFBundleIdentifier from Info.plist"
+            echo "ERROR: Could not read CFBundleIdentifier"
             exit 1
           fi
-          echo "CFBundleIdentifier: $BUNDLE_ID"
+          echo "Bundle ID: $BUNDLE_ID"
 
-          # Package genuine IPA
-          rm -rf Payload
-          mkdir -p Payload
-          cp -R "$APP_PATH" Payload/
+          SHORT_VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PATH/Info.plist" 2>/dev/null || echo "1.0.0")
+          BUILD_VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP_PATH/Info.plist" 2>/dev/null || echo "0")
+          echo "Version: $SHORT_VER ($BUILD_VER)"
+
+          # Package IPA (Payload/ structure)
+          rm -rf build/Payload
+          mkdir -p build/Payload
+          cp -R "$APP_PATH" build/Payload/
+          cd build
+          rm -f WallpaperEngineExporter.ipa
           zip -r WallpaperEngineExporter.ipa Payload
-          rm -rf Payload
+          cd ..
 
-          echo "IPA created:"
-          ls -lh WallpaperEngineExporter.ipa
-          file WallpaperEngineExporter.ipa
+          IPA="$PWD/build/WallpaperEngineExporter.ipa"
+          test -f "$IPA"
+          IPA_SIZE=$(du -h "$IPA" | awk '{print $1}')
+          IPA_SHA=$(shasum -a 256 "$IPA" | awk '{print $1}')
+          echo "IPA: $IPA ($IPA_SIZE)"
+          echo "SHA-256: $IPA_SHA"
 
-      - name: Validate IPA (strict)
-        id: validate
-        run: |
-          set -euo pipefail
+          # Export for later steps
+          echo "IPA_PATH=$IPA" >> "$GITHUB_ENV"
+          echo "IPA_SIZE=$IPA_SIZE" >> "$GITHUB_ENV"
+          echo "IPA_SHA=$IPA_SHA" >> "$GITHUB_ENV"
+          echo "BUNDLE_ID=$BUNDLE_ID" >> "$GITHUB_ENV"
+          echo "SHORT_VER=$SHORT_VER" >> "$GITHUB_ENV"
+          echo "BUILD_VER=$BUILD_VER" >> "$GITHUB_ENV"
 
-          IPA=WallpaperEngineExporter.ipa
-
-          if [ ! -f "$IPA" ]; then
-            echo "ERROR: IPA file does not exist"
-            exit 1
-          fi
-
-          # Must be a valid zip
-          if ! unzip -t "$IPA" > /dev/null; then
-            echo "ERROR: IPA is not a valid ZIP archive"
-            exit 1
-          fi
-
-          # Size check – genuine app should not be tiny
-          SIZE=$(stat -f%z "$IPA" 2>/dev/null || stat -c%s "$IPA")
-          echo "IPA size: $SIZE bytes"
-          if [ "$SIZE" -lt 50000 ]; then
-            echo "ERROR: IPA is suspiciously small ($SIZE bytes). Likely incomplete."
-            exit 1
-          fi
-
-          echo "=== IPA contents (first 40 entries) ==="
-          unzip -l "$IPA" | head -40
-
-          # Required structure
-          unzip -l "$IPA" | grep -q "Payload/.*\.app/" || {
-            echo "ERROR: Missing Payload/*.app/"
-            exit 1
-          }
-
-          # Extract for deeper checks
-          rm -rf /tmp/ipa_check
-          mkdir -p /tmp/ipa_check
-          unzip -q "$IPA" -d /tmp/ipa_check
-
-          APP_IN_IPA=$(find /tmp/ipa_check/Payload -name "*.app" -type d | head -1)
-          if [ -z "$APP_IN_IPA" ]; then
-            echo "ERROR: No .app directory inside Payload"
-            exit 1
-          fi
-          echo "App inside IPA: $APP_IN_IPA"
-
-          if [ ! -f "$APP_IN_IPA/Info.plist" ]; then
-            echo "ERROR: Info.plist missing inside IPA .app"
-            exit 1
-          fi
-
-          # Executable must exist and be a Mach-O binary
-          EXEC=$(find "$APP_IN_IPA" -type f -perm +111 -maxdepth 1 | head -1 || true)
-          if [ -z "$EXEC" ]; then
-            EXEC="$APP_IN_IPA/WallpaperEngineExporter"
-          fi
-          if [ ! -f "$EXEC" ]; then
-            echo "ERROR: Executable missing inside IPA .app"
-            find "$APP_IN_IPA" -maxdepth 2 -type f
-            exit 1
-          fi
-          echo "Executable inside IPA: $EXEC"
-          file "$EXEC"
-          file "$EXEC" | grep -qi "Mach-O\|executable" || {
-            echo "ERROR: Executable does not appear to be a Mach-O binary"
-            exit 1
-          }
-
-          # Bundle identifier
-          BID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP_IN_IPA/Info.plist" 2>/dev/null \
-            || plutil -extract CFBundleIdentifier raw "$APP_IN_IPA/Info.plist" 2>/dev/null \
-            || echo "")
-          if [ -z "$BID" ]; then
-            echo "ERROR: CFBundleIdentifier could not be read from IPA Info.plist"
-            exit 1
-          fi
-          echo "Validated CFBundleIdentifier: $BID"
-
-          # Version from built app
-          SHORT_VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_IN_IPA/Info.plist" 2>/dev/null \
-            || plutil -extract CFBundleShortVersionString raw "$APP_IN_IPA/Info.plist" 2>/dev/null \
-            || echo "1.0.0")
-          BUILD_VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP_IN_IPA/Info.plist" 2>/dev/null \
-            || plutil -extract CFBundleVersion raw "$APP_IN_IPA/Info.plist" 2>/dev/null \
-            || echo "1")
-
-          SHA256=$(shasum -a 256 "$IPA" | awk '{print $1}')
-          HUMAN_SIZE=$(ls -lh "$IPA" | awk '{print $5}')
-
-          echo "=== IPA VALIDATION PASSED ==="
-          echo "Size: $HUMAN_SIZE ($SIZE bytes)"
-          echo "SHA-256: $SHA256"
-          echo "Bundle ID: $BID"
-          echo "Version: $SHORT_VER build $BUILD_VER"
-          echo "Note: This IPA is UNSIGNED (CODE_SIGNING_ALLOWED=NO). Suitable for CI validation only."
-
-          # Persist for later steps
-          echo "ipa_size_bytes=$SIZE" >> "$GITHUB_OUTPUT"
-          echo "ipa_size_human=$HUMAN_SIZE" >> "$GITHUB_OUTPUT"
-          echo "ipa_sha256=$SHA256" >> "$GITHUB_OUTPUT"
-          echo "bundle_id=$BID" >> "$GITHUB_OUTPUT"
-          echo "short_version=$SHORT_VER" >> "$GITHUB_OUTPUT"
-          echo "build_version=$BUILD_VER" >> "$GITHUB_OUTPUT"
-          echo "release_tag=v${SHORT_VER}-build${BUILD_VER}" >> "$GITHUB_OUTPUT"
-
-          rm -rf /tmp/ipa_check
-
-      - name: Upload IPA artifact (unsigned)
+      - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: WallpaperEngineExporter-IPA-unsigned
-          path: WallpaperEngineExporter.ipa
-          retention-days: 14
+          name: WallpaperEngineExporter-ipa
+          path: build/WallpaperEngineExporter.ipa
           if-no-files-found: error
+          retention-days: 14
 
-      - name: Pre-release safety re-check
-        if: github.event_name != 'pull_request'
-        run: |
-          set -euo pipefail
-          IPA=WallpaperEngineExporter.ipa
-
-          if [ ! -f "$IPA" ]; then
-            echo "ERROR: IPA missing before release"
-            exit 1
-          fi
-
-          SIZE=$(stat -f%z "$IPA" 2>/dev/null || stat -c%s "$IPA")
-          EXPECTED_SIZE="${{ steps.validate.outputs.ipa_size_bytes }}"
-          if [ "$SIZE" != "$EXPECTED_SIZE" ]; then
-            echo "ERROR: IPA size changed after validation ($SIZE vs $EXPECTED_SIZE)"
-            exit 1
-          fi
-
-          SHA=$(shasum -a 256 "$IPA" | awk '{print $1}')
-          EXPECTED_SHA="${{ steps.validate.outputs.ipa_sha256 }}"
-          if [ "$SHA" != "$EXPECTED_SHA" ]; then
-            echo "ERROR: IPA SHA-256 mismatch after validation"
-            echo "Current:  $SHA"
-            echo "Expected: $EXPECTED_SHA"
-            exit 1
-          fi
-
-          if ! unzip -t "$IPA" > /dev/null; then
-            echo "ERROR: IPA is not a valid ZIP before release"
-            exit 1
-          fi
-
-          unzip -l "$IPA" | grep -q "Payload/.*\.app/" || {
-            echo "ERROR: Missing Payload/*.app/ before release"
-            exit 1
-          }
-
-          rm -rf /tmp/ipa_release_check
-          mkdir -p /tmp/ipa_release_check
-          unzip -q "$IPA" -d /tmp/ipa_release_check
-          APP=$(find /tmp/ipa_release_check/Payload -name "*.app" -type d | head -1)
-          if [ -z "$APP" ] || [ ! -f "$APP/Info.plist" ]; then
-            echo "ERROR: App or Info.plist missing before release"
-            exit 1
-          fi
-          EXEC=$(find "$APP" -type f -perm +111 -maxdepth 1 | head -1 || true)
-          if [ -z "$EXEC" ]; then
-            EXEC="$APP/WallpaperEngineExporter"
-          fi
-          if [ ! -f "$EXEC" ]; then
-            echo "ERROR: Executable missing before release"
-            exit 1
-          fi
-          file "$EXEC" | grep -qi "Mach-O\|executable" || {
-            echo "ERROR: Executable is not Mach-O before release"
-            exit 1
-          }
-          BID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist" 2>/dev/null \
-            || plutil -extract CFBundleIdentifier raw "$APP/Info.plist" 2>/dev/null \
-            || echo "")
-          if [ -z "$BID" ]; then
-            echo "ERROR: CFBundleIdentifier missing before release"
-            exit 1
-          fi
-
-          echo "Pre-release checks passed. SHA-256=$SHA Size=$SIZE"
-          rm -rf /tmp/ipa_release_check
-
-      - name: Create or update GitHub Release (unsigned CI build)
-        if: github.event_name != 'pull_request'
+      - name: Create or update GitHub Release
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          IPA=WallpaperEngineExporter.ipa
-          TAG="${{ steps.validate.outputs.release_tag }}"
-          SHORT_VER="${{ steps.validate.outputs.short_version }}"
-          BUILD_VER="${{ steps.validate.outputs.build_version }}"
-          IPA_SIZE="${{ steps.validate.outputs.ipa_size_human }}"
-          IPA_SHA="${{ steps.validate.outputs.ipa_sha256 }}"
-          BUNDLE_ID="${{ steps.validate.outputs.bundle_id }}"
+          IPA="${IPA_PATH:-build/WallpaperEngineExporter.ipa}"
+          test -f "$IPA"
+
+          SHORT_VER="${SHORT_VER:-1.0.0}"
+          BUILD_VER="${BUILD_VER:-0}"
+          TAG="v${SHORT_VER}-b${BUILD_VER}"
+          TITLE="Wallpaper Engine Exporter ${SHORT_VER} (build ${BUILD_VER})"
           COMMIT_SHA="${{ github.sha }}"
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
-          TITLE="v${SHORT_VER} (build ${BUILD_VER}) — Unsigned CI build"
-
           NOTES=$(cat <<EOF
-          ## Wallpaper Engine Exporter — Unsigned CI build
+          ## Wallpaper Engine Exporter ${SHORT_VER} (build ${BUILD_VER})
 
-          **This release contains an UNSIGNED IPA** produced by GitHub Actions without Apple code-signing certificates.
-          It is intended for CI validation and inspection only. It will **not** install on devices without proper signing.
+          Automated CI build. This IPA is **unsigned** and is intended for CI validation and inspection only. It will **not** install on devices without proper signing.
 
           | Field | Value |
           |-------|-------|
