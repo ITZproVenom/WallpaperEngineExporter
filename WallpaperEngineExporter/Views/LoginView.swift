@@ -38,7 +38,7 @@ struct LoginView: View {
                 auth.signIn()
             } label: {
                 HStack {
-                    if auth.isLoading {
+                    if auth.isLoading && !auth.showLoginWebView {
                         ProgressView()
                             .tint(.white)
                     } else {
@@ -65,5 +65,11 @@ struct LoginView: View {
                 .padding()
         }
         .padding()
+        .sheet(isPresented: $auth.showLoginWebView) {
+            SteamLoginWebView()
+                .environmentObject(auth)
+                .presentationDetents([.large])
+                .interactiveDismissDisabled(false)
+        }
     }
 }

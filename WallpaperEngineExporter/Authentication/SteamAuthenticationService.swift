@@ -1,117 +1,78 @@
 import Foundation
-import AuthenticationServices
 import Combine
 import UIKit
 
-/// Real Steam OpenID 2.0 authentication via ASWebAuthenticationSession.
+/// Real Steam OpenID 2.0 authentication.
 ///
 /// Steam rejects custom URL schemes as `openid.return_to` ("Invalid return protocol").
-/// Flow:
-/// 1. Open Steam OpenID with HTTPS return_to (jsDelivr-hosted bridge page in this repo).
-/// 2. Bridge page redirects to `wallpaperexporter://steam-callback?...`.
-/// 3. ASWebAuthenticationSession delivers the callback to the app.
-/// 4. App validates OpenID with Steam (`check_authentication`).
-/// 5. SteamID is extracted, profile is fetched, session is stored in Keychain.
+/// ASWebAuthenticationSession + custom-scheme callbacks are unreliable inside LiveContainer
+/// and when intermediate HTML is served as text/plain.
+///
+/// Flow (WKWebView):
+/// 1. Present Steam OpenID login with HTTPS `return_to`.
+/// 2. After Steam Guard, Steam redirects to that HTTPS URL with OpenID query params.
+/// 3. WKNavigationDelegate intercepts that navigation and reads the params (no custom scheme needed).
+/// 4. App validates with Steam `check_authentication`, then loads profile.
 @MainActor
 final class SteamAuthenticationService: NSObject, ObservableObject {
     @Published private(set) var isAuthenticated = false
     @Published private(set) var currentUser: SteamUser?
     @Published private(set) var isLoading = false
     @Published var lastError: String?
+    @Published var showLoginWebView = false
 
     private let keychain = KeychainHelper()
     private let steamIDKey = "steam_id"
     private let sessionTimestampKey = "steam_session_ts"
-    private let callbackScheme = "wallpaperexporter"
-    private let callbackHost = "steam-callback"
 
-    /// HTTPS bridge hosted from this repository (jsDelivr CDN). Steam requires http(s) return_to.
-    private let httpsReturnTo =
+    /// HTTPS return_to required by Steam. The page itself need not render;
+    /// WKWebView intercepts the navigation URL and its query string.
+    static let httpsReturnTo =
         "https://cdn.jsdelivr.net/gh/ITZproVenom/WallpaperEngineExporter@main/docs/steam-callback.html"
-    private let httpsRealm = "https://cdn.jsdelivr.net"
-
-    private var authSession: ASWebAuthenticationSession?
+    static let httpsRealm = "https://cdn.jsdelivr.net"
 
     override init() {
         super.init()
         restoreSession()
     }
 
-    func signIn() {
-        isLoading = true
-        lastError = nil
-
+    /// Builds the Steam OpenID login URL (HTTPS return_to).
+    func makeOpenIDLoginURL() -> URL? {
         var components = URLComponents(string: "https://steamcommunity.com/openid/login")!
         components.queryItems = [
             URLQueryItem(name: "openid.ns", value: "http://specs.openid.net/auth/2.0"),
             URLQueryItem(name: "openid.mode", value: "checkid_setup"),
-            URLQueryItem(name: "openid.return_to", value: httpsReturnTo),
-            URLQueryItem(name: "openid.realm", value: httpsRealm),
+            URLQueryItem(name: "openid.return_to", value: Self.httpsReturnTo),
+            URLQueryItem(name: "openid.realm", value: Self.httpsRealm),
             URLQueryItem(name: "openid.identity", value: "http://specs.openid.net/auth/2.0/identifier_select"),
             URLQueryItem(name: "openid.claimed_id", value: "http://specs.openid.net/auth/2.0/identifier_select")
         ]
-
-        guard let url = components.url else {
-            lastError = "Steam Login Failed\n\nCould not construct the Steam OpenID login URL."
-            isLoading = false
-            return
-        }
-
-        let session = ASWebAuthenticationSession(
-            url: url,
-            callbackURLScheme: callbackScheme
-        ) { [weak self] callbackURL, error in
-            Task { @MainActor in
-                self?.handleCallback(callbackURL: callbackURL, error: error)
-            }
-        }
-        session.presentationContextProvider = self
-        // Keep cookies so Steam Guard / remembered login works across attempts
-        session.prefersEphemeralWebBrowserSession = false
-        authSession = session
-
-        if !session.start() {
-            lastError = "Steam Login Failed\n\nCould not start ASWebAuthenticationSession."
-            isLoading = false
-        }
+        return components.url
     }
 
-    private func handleCallback(callbackURL: URL?, error: Error?) {
-        if let error = error as? ASWebAuthenticationSessionError,
-           error.code == .canceledLogin {
-            lastError = nil
-            isLoading = false
-            authSession = nil
+    func signIn() {
+        lastError = nil
+        guard makeOpenIDLoginURL() != nil else {
+            lastError = "Steam Login Failed\n\nCould not construct the Steam OpenID login URL."
             return
         }
+        isLoading = true
+        showLoginWebView = true
+    }
 
-        if let error = error {
-            lastError = "Steam Login Failed\n\nAuthentication session error.\n\(error.localizedDescription)"
-            isLoading = false
-            authSession = nil
-            return
-        }
+    func cancelLoginWebView() {
+        showLoginWebView = false
+        isLoading = false
+    }
 
-        guard let callbackURL = callbackURL else {
-            lastError = "Steam Login Failed\n\nNo callback URL received from the authentication session."
-            isLoading = false
-            authSession = nil
-            return
-        }
-
-        guard callbackURL.scheme?.lowercased() == callbackScheme else {
-            lastError = "Steam Login Failed\n\nUnexpected callback scheme: \(callbackURL.scheme ?? "nil"). Expected \(callbackScheme)."
-            isLoading = false
-            authSession = nil
-            return
-        }
-
-        guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
+    /// Called when WKWebView navigates to the HTTPS return_to (or any URL with OpenID id_res params).
+    func handleOpenIDCallbackURL(_ url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               let items = components.queryItems,
               !items.isEmpty else {
-            lastError = "Steam Login Failed\n\nCallback URL had no OpenID parameters.\n\(callbackURL.absoluteString)"
+            lastError = "Steam Login Failed\n\nCallback URL had no OpenID parameters.\n\(url.absoluteString)"
             isLoading = false
-            authSession = nil
+            showLoginWebView = false
             return
         }
 
@@ -120,18 +81,20 @@ final class SteamAuthenticationService: NSObject, ObservableObject {
             return (item.name, value)
         })
 
+        processOpenIDParams(params)
+    }
+
+    private func processOpenIDParams(_ params: [String: String]) {
         if params["openid.mode"] == "error" {
             let msg = params["openid.error"] ?? "Steam returned an OpenID error."
             lastError = "Steam Login Failed\n\n\(msg)"
             isLoading = false
-            authSession = nil
+            showLoginWebView = false
             return
         }
 
         guard params["openid.mode"] == "id_res" else {
-            lastError = "Steam Login Failed\n\nUnexpected OpenID mode: \(params["openid.mode"] ?? "missing")."
-            isLoading = false
-            authSession = nil
+            // Not the final assertion yet (e.g. intermediate page) — keep web view open
             return
         }
 
@@ -139,11 +102,12 @@ final class SteamAuthenticationService: NSObject, ObservableObject {
               let steamID = Self.steamID(fromClaimedID: claimedID) else {
             lastError = "Steam Login Failed\n\nCould not extract a valid SteamID64 from openid.claimed_id."
             isLoading = false
-            authSession = nil
+            showLoginWebView = false
             return
         }
 
-        // Validate assertion with Steam (required for real auth)
+        showLoginWebView = false
+
         Task {
             do {
                 let valid = try await Self.verifyOpenIDResponse(params: params)
@@ -151,7 +115,6 @@ final class SteamAuthenticationService: NSObject, ObservableObject {
                     await MainActor.run {
                         self.lastError = "Steam Login Failed\n\nOpenID validation failed (Steam did not confirm is_valid:true)."
                         self.isLoading = false
-                        self.authSession = nil
                     }
                     return
                 }
@@ -162,19 +125,30 @@ final class SteamAuthenticationService: NSObject, ObservableObject {
                 await self.fetchAndApplyProfile(steamID: steamID)
                 await MainActor.run {
                     self.isLoading = false
-                    self.authSession = nil
                 }
             } catch {
                 await MainActor.run {
                     self.lastError = "Steam Login Failed\n\nOpenID validation request failed.\n\(error.localizedDescription)"
                     self.isLoading = false
-                    self.authSession = nil
                 }
             }
         }
     }
 
-    /// POST openid.mode=check_authentication to Steam.
+    /// True if this URL is our Steam OpenID return_to (with or without query).
+    static func isOpenIDReturnURL(_ url: URL) -> Bool {
+        let s = url.absoluteString
+        if s.hasPrefix(httpsReturnTo) { return true }
+        // Fallback: any URL that carries a finished OpenID assertion
+        if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           let items = components.queryItems {
+            let mode = items.first(where: { $0.name == "openid.mode" })?.value
+            let claimed = items.first(where: { $0.name == "openid.claimed_id" })?.value
+            if mode == "id_res", claimed != nil { return true }
+        }
+        return false
+    }
+
     nonisolated private static func verifyOpenIDResponse(params: [String: String]) async throws -> Bool {
         var bodyItems: [URLQueryItem] = [
             URLQueryItem(name: "openid.mode", value: "check_authentication")
@@ -199,14 +173,12 @@ final class SteamAuthenticationService: NSObject, ObservableObject {
               let text = String(data: data, encoding: .utf8) else {
             return false
         }
-        // Steam responds with key:value lines; success is "is_valid:true"
         return text.split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .contains { $0.lowercased() == "is_valid:true" }
     }
 
     nonisolated static func steamID(fromClaimedID claimedID: String) -> String? {
-        // https://steamcommunity.com/openid/id/7656119...
         guard let last = claimedID.split(separator: "/").last.map(String.init),
               last.count >= 15,
               last.allSatisfy(\Character.isNumber) else {
@@ -244,7 +216,7 @@ final class SteamAuthenticationService: NSObject, ObservableObject {
                 )
             }
         } catch {
-            // Profile is best-effort; authenticated identity is the validated SteamID
+            // Profile is best-effort; identity is the validated SteamID
         }
 
         self.currentUser = user
@@ -286,15 +258,5 @@ final class SteamAuthenticationService: NSObject, ObservableObject {
             }
         }
         return nil
-    }
-}
-
-extension SteamAuthenticationService: ASWebAuthenticationPresentationContextProviding {
-    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        if let key = scenes.flatMap({ $0.windows }).first(where: { $0.isKeyWindow }) {
-            return key
-        }
-        return scenes.first?.windows.first ?? ASPresentationAnchor()
     }
 }
