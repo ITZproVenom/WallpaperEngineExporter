@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Restore complete known-good device project.pbxproj from scripts/pbx.gz.b64."""
+"""Restore complete known-good device project.pbxproj from scripts/pbx.zlib.b64."""
 from __future__ import annotations
-import base64, gzip
+import base64, zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "WallpaperEngineExporter.xcodeproj" / "project.pbxproj"
-BLOB_PATH = Path(__file__).resolve().parent / "pbx.gz.b64"
+BLOB_PATH = Path(__file__).resolve().parent / "pbx.zlib.b64"
 
 def main() -> None:
     blob = BLOB_PATH.read_text().strip()
-    raw = gzip.decompress(base64.b64decode(blob))
+    raw = zlib.decompress(base64.b64decode(blob))
     text = raw.decode("utf-8")
     required = (
         "PBXNativeTarget",
