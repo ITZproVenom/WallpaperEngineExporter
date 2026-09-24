@@ -100,10 +100,11 @@ jobs:
             CODE_SIGNING_REQUIRED=NO
           echo "status=passed" >> "$GITHUB_OUTPUT"
 
-      - name: Archive (unsigned – no signing secrets on CI)
+      - name: Build Release (unsigned device)
         run: |
           set -euo pipefail
           mkdir -p build
+          set +e
           xcodebuild \
             -project WallpaperEngineExporter.xcodeproj \
             -scheme WallpaperEngineExporter \
@@ -116,22 +117,44 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             DEVELOPMENT_TEAM="" \
             ONLY_ACTIVE_ARCH=NO
+          ARCHIVE_RC=$?
+          set -e
+          if [ "$ARCHIVE_RC" -ne 0 ]; then
+            echo "Archive failed (rc=$ARCHIVE_RC) — falling back to xcodebuild build -sdk iphoneos"
+            xcodebuild \
+              -project WallpaperEngineExporter.xcodeproj \
+              -scheme WallpaperEngineExporter \
+              -configuration Release \
+              -sdk iphoneos \
+              -derivedDataPath "$PWD/build/DerivedData" \
+              build \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGN_IDENTITY="-" \
+              CODE_SIGNING_REQUIRED=NO \
+              DEVELOPMENT_TEAM="" \
+              ONLY_ACTIVE_ARCH=NO
+          fi
 
       - name: Locate real .app and package IPA
         run: |
           set -euo pipefail
 
-          APP_PATH="build/WallpaperEngineExporter.xcarchive/Products/Applications/WallpaperEngineExporter.app"
-
-          if [ ! -d "$APP_PATH" ]; then
-            echo "ERROR: Real .app not found at $APP_PATH"
-            echo "Archive contents:"
+          APP_PATH=""
+          if [ -d "build/WallpaperEngineExporter.xcarchive/Products/Applications/WallpaperEngineExporter.app" ]; then
+            APP_PATH="build/WallpaperEngineExporter.xcarchive/Products/Applications/WallpaperEngineExporter.app"
+          fi
+          if [ -z "$APP_PATH" ]; then
+            APP_PATH=$(find build/DerivedData -type d -name "WallpaperEngineExporter.app" 2>/dev/null | head -1 || true)
+          fi
+          if [ -z "$APP_PATH" ]; then
+            APP_PATH=$(find build -type d -name "WallpaperEngineExporter.app" 2>/dev/null | head -1 || true)
+          fi
+          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: WallpaperEngineExporter.app not found"
             find build -type d -name "*.app" 2>/dev/null || true
-            find build -type d 2>/dev/null | head -50 || true
             exit 1
           fi
-
-          echo "Found real application: $APP_PATH"
+          echo "Found app at $APP_PATH"
           ls -la "$APP_PATH"
 
           EXECUTABLE="$APP_PATH/WallpaperEngineExporter"
