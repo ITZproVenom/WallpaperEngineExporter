@@ -10,22 +10,19 @@
     a { display: inline-block; margin-top: 1rem; padding: 12px 20px; background: #1a73e8; color: #fff;
       text-decoration: none; border-radius: 10px; font-weight: 600; }
   </style>
+  <meta http-equiv="refresh" content="0;url=wallpaperexporter://steam-callback" />
 </head>
 <body>
   <div>
     <p>Completing Steam sign-in…</p>
-    <p id="manual" style="display:none;color:#9898a6">If the app does not continue, tap below.</p>
-    <a id="open" href="#" style="display:none">Open Wallpaper Engine Exporter</a>
+    <p style="color:#9898a6">If the app does not continue, open it manually.</p>
+    <a id="open" href="wallpaperexporter://steam-callback">Open Wallpaper Engine Exporter</a>
   </div>
   <script>
     (function () {
       var target = "wallpaperexporter://steam-callback" + (window.location.search || "");
       document.getElementById("open").href = target;
       try { window.location.replace(target); } catch (e) {}
-      setTimeout(function () {
-        document.getElementById("manual").style.display = "block";
-        document.getElementById("open").style.display = "inline-block";
-      }, 700);
     })();
   </script>
 </body>

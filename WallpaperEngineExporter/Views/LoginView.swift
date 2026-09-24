@@ -56,14 +56,12 @@ struct LoginView: View {
             .disabled(auth.isLoading)
             .padding(.horizontal, 40)
 
-            // Explicit in-app browser path when ASWeb fails / LiveContainer
-            if auth.lastError != nil || SteamAuthenticationService.prefersWebViewAuth {
-                Button("Sign in with in-app browser") {
-                    auth.signInWithWebView()
-                }
-                .font(.subheadline.weight(.medium))
-                .disabled(auth.isLoading)
+            // Always available — required on LiveContainer / when ASWeb cannot complete
+            Button("Sign in with in-app browser") {
+                auth.signInWithWebView()
             }
+            .font(.subheadline.weight(.medium))
+            .disabled(auth.isLoading)
 
             Spacer()
 
