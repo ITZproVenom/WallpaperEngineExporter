@@ -36,14 +36,15 @@ final class SteamAuthenticationService: NSObject, ObservableObject {
     /// WKWebView intercepts navigation to this URL (with OpenID query) and never loads the page.
     /// Page content is irrelevant for the WKWebView path.
     static let httpsReturnTo =
-        "https://raw.githack.com/ITZproVenom/WallpaperEngineExporter/main/docs/openid-return.html"
-    static let httpsRealm = "https://raw.githack.com"
+        "https://raw.githubusercontent.com/ITZproVenom/WallpaperEngineExporter/main/docs/openid-return.html"
+    static let httpsRealm = "https://raw.githubusercontent.com"
 
     /// Legacy hosts we still treat as return_to if Steam or an older build redirects there.
     private static let legacyReturnToPrefixes: [String] = [
-        "https://cdn.jsdelivr.net/gh/ITZproVenom/WallpaperEngineExporter",
+        "https://raw.githubusercontent.com/ITZproVenom/WallpaperEngineExporter",
         "https://raw.githack.com/ITZproVenom/WallpaperEngineExporter",
-        "https://raw.githubusercontent.com/ITZproVenom/WallpaperEngineExporter"
+        "https://cdn.jsdelivr.net/gh/ITZproVenom/WallpaperEngineExporter",
+        "https://cdn.jsdelivr.net/gh/itzprovenom/WallpaperEngineExporter"
     ]
 
     // MARK: - Environment detection
