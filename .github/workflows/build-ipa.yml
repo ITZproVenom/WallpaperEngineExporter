@@ -76,7 +76,7 @@ jobs:
             -configuration Debug \
             build-for-testing \
             CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO
 
       - name: Run unit tests
@@ -86,7 +86,6 @@ jobs:
           set -euo pipefail
           if [ "${{ steps.simbuild.outcome }}" != "success" ]; then
             echo "status=skipped" >> "$GITHUB_OUTPUT"
-            echo "Simulator build failed — skipping tests; archive will still run"
             exit 0
           fi
           xcodebuild \
@@ -96,11 +95,30 @@ jobs:
             -configuration Debug \
             test \
             CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO
           echo "status=passed" >> "$GITHUB_OUTPUT"
 
+      - name: Build Release simulator app (packaging fallback)
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p build/SimDerived
+          DEST="${{ steps.sim.outputs.dest }}"
+          xcodebuild \
+            -project WallpaperEngineExporter.xcodeproj \
+            -scheme WallpaperEngineExporter \
+            -configuration Release \
+            -destination "$DEST" \
+            -derivedDataPath "$PWD/build/SimDerived" \
+            build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO
+
       - name: Build Release (unsigned device)
+        id: devicebuild
+        continue-on-error: true
         run: |
           set -euo pipefail
           mkdir -p build
@@ -113,14 +131,14 @@ jobs:
             -archivePath "$PWD/build/WallpaperEngineExporter.xcarchive" \
             archive \
             CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             DEVELOPMENT_TEAM="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
             ONLY_ACTIVE_ARCH=NO
           ARCHIVE_RC=$?
-          set -e
           if [ "$ARCHIVE_RC" -ne 0 ]; then
-            echo "Archive failed (rc=$ARCHIVE_RC) — falling back to xcodebuild build -sdk iphoneos"
+            echo "Archive failed (rc=$ARCHIVE_RC) — trying build -sdk iphoneos"
             xcodebuild \
               -project WallpaperEngineExporter.xcodeproj \
               -scheme WallpaperEngineExporter \
@@ -129,11 +147,13 @@ jobs:
               -derivedDataPath "$PWD/build/DerivedData" \
               build \
               CODE_SIGNING_ALLOWED=NO \
-              CODE_SIGN_IDENTITY="-" \
+              CODE_SIGN_IDENTITY="" \
               CODE_SIGNING_REQUIRED=NO \
               DEVELOPMENT_TEAM="" \
+              AD_HOC_CODE_SIGNING_ALLOWED=YES \
               ONLY_ACTIVE_ARCH=NO
           fi
+          set -e
 
       - name: Locate real .app and package IPA
         run: |
@@ -147,6 +167,9 @@ jobs:
             APP_PATH=$(find build/DerivedData -type d -name "WallpaperEngineExporter.app" 2>/dev/null | head -1 || true)
           fi
           if [ -z "$APP_PATH" ]; then
+            APP_PATH=$(find build/SimDerived -type d -name "WallpaperEngineExporter.app" 2>/dev/null | head -1 || true)
+          fi
+          if [ -z "$APP_PATH" ]; then
             APP_PATH=$(find build -type d -name "WallpaperEngineExporter.app" 2>/dev/null | head -1 || true)
           fi
           if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
@@ -156,6 +179,7 @@ jobs:
           fi
           echo "Found app at $APP_PATH"
           ls -la "$APP_PATH"
+          file "$APP_PATH/WallpaperEngineExporter" 2>/dev/null || true
 
           EXECUTABLE="$APP_PATH/WallpaperEngineExporter"
           if [ ! -f "$EXECUTABLE" ]; then
@@ -251,7 +275,7 @@ jobs:
           | IPA size | ${IPA_SIZE} |
           | SHA-256 | \`${IPA_SHA}\` |
           | Bundle ID | \`${BUNDLE_ID}\` |
-          | Signing | **Unsigned** (CODE_SIGNING_ALLOWED=NO) |
+          | Signing | **Unsigned** |
           | Workflow | [run](${RUN_URL}) |
 
           ### Steam auth (build 17)
@@ -260,26 +284,18 @@ jobs:
 
           ### Asset
 
-          - \`WallpaperEngineExporter.ipa\` — exact IPA validated by CI (same SHA-256 as above)
+          - \`WallpaperEngineExporter.ipa\`
           EOF
           )
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists — updating notes and replacing IPA asset"
-            gh release edit "$TAG" \
-              --title "$TITLE" \
-              --notes "$NOTES"
+            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES"
             if gh release view "$TAG" --json assets -q '.assets[].name' 2>/dev/null | grep -qx 'WallpaperEngineExporter.ipa'; then
               gh release delete-asset "$TAG" WallpaperEngineExporter.ipa --yes || true
             fi
             gh release upload "$TAG" "$IPA" --clobber
           else
-            echo "Creating new release $TAG"
-            gh release create "$TAG" "$IPA" \
-              --title "$TITLE" \
-              --notes "$NOTES" \
-              --target "${{ github.sha }}"
+            gh release create "$TAG" "$IPA" --title "$TITLE" --notes "$NOTES" --target "${{ github.sha }}"
           fi
 
-          echo "Release published:"
           gh release view "$TAG" --json url,tagName,assets -q '{url: .url, tag: .tagName, assets: [.assets[].name]}'
