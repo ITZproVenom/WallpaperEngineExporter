@@ -14,7 +14,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "A60000000000000000000001"
+               BlueprintIdentifier = "A500000000000001"
                BuildableName = "WallpaperEngineExporter.app"
                BlueprintName = "WallpaperEngineExporter"
                ReferencedContainer = "container:WallpaperEngineExporter.xcodeproj">
@@ -34,7 +34,7 @@
             parallelizable = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "A60000000000000000000002"
+               BlueprintIdentifier = "A500000000000002"
                BuildableName = "WallpaperEngineExporterTests.xctest"
                BlueprintName = "WallpaperEngineExporterTests"
                ReferencedContainer = "container:WallpaperEngineExporter.xcodeproj">
@@ -56,7 +56,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "A60000000000000000000001"
+            BlueprintIdentifier = "A500000000000001"
             BuildableName = "WallpaperEngineExporter.app"
             BlueprintName = "WallpaperEngineExporter"
             ReferencedContainer = "container:WallpaperEngineExporter.xcodeproj">
@@ -73,7 +73,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "A60000000000000000000001"
+            BlueprintIdentifier = "A500000000000001"
             BuildableName = "WallpaperEngineExporter.app"
             BlueprintName = "WallpaperEngineExporter"
             ReferencedContainer = "container:WallpaperEngineExporter.xcodeproj">
