@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
-"""Restore complete project.pbxproj from base64 parts (known-good device archive settings)."""
+"""Restore complete known-good device project.pbxproj from scripts/pbx.gz.b64."""
 from __future__ import annotations
-import base64
+import base64, gzip
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "WallpaperEngineExporter.xcodeproj" / "project.pbxproj"
-SCRIPTS = ROOT / "scripts"
+BLOB_PATH = Path(__file__).resolve().parent / "pbx.gz.b64"
 
 def main() -> None:
-    parts = sorted(SCRIPTS.glob("pbx.b64.part*"))
-    if not parts:
-        raise SystemExit("No pbx.b64.part* found")
-    data = "".join(p.read_text().strip() for p in parts)
-    raw = base64.b64decode(data)
+    blob = BLOB_PATH.read_text().strip()
+    raw = gzip.decompress(base64.b64decode(blob))
     text = raw.decode("utf-8")
     required = (
         "PBXNativeTarget",
@@ -21,6 +18,7 @@ def main() -> None:
         "PRODUCT_BUNDLE_IDENTIFIER",
         "DEVELOPMENT_TEAM",
         "A60000000000000000000001",
+        "SDKROOT = iphoneos",
     )
     missing = [r for r in required if r not in text]
     if missing:
