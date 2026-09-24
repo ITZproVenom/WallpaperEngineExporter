@@ -10,7 +10,14 @@ struct WallpaperEngineExporterApp: App {
             RootView()
                 .environmentObject(authService)
                 .environmentObject(workshopService)
-                .preferredColorScheme(nil) // support system light/dark
+                .preferredColorScheme(nil)
+                .onOpenURL { url in
+                    // Custom scheme callback (wallpaperexporter://steam-callback?…)
+                    if SteamAuthenticationService.isOpenIDReturnURL(url)
+                        || SteamAuthenticationService.isFinishedOpenIDAssertion(url) {
+                        authService.handleOpenIDCallbackURL(url)
+                    }
+                }
         }
     }
 }
