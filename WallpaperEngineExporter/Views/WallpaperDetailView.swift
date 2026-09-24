@@ -2,6 +2,7 @@ import SwiftUI
 
 struct WallpaperDetailView: View {
     let item: WorkshopItem
+    @EnvironmentObject var workshop: SteamWorkshopService
     @State private var config = ExportConfiguration()
     @State private var showExport = false
     @State private var liveItem: WorkshopItem
@@ -64,34 +65,21 @@ struct WallpaperDetailView: View {
             VideoPreviewView(url: path)
         } else if liveItem.type == .web,
                   let path = liveItem.localPath {
-            // path may be root or file
             let root = path.hasDirectoryPath ? path : path.deletingLastPathComponent()
             let entry = path.hasDirectoryPath ? "index.html" : path.lastPathComponent
             WebWallpaperPreviewView(rootDirectory: root, entryFile: entry)
                 .frame(height: 220)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
         } else if let preview = liveItem.previewURL {
-            if preview.isFileURL {
-                AsyncImage(url: preview) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFit()
-                    default:
-                        placeholderPreview
-                    }
+            AsyncImage(url: preview) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFit()
+                default:
+                    placeholderPreview
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-            } else {
-                AsyncImage(url: preview) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFit()
-                    default:
-                        placeholderPreview
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 16))
             }
+            .clipShape(RoundedRectangle(cornerRadius: 16))
         } else {
             placeholderPreview
         }
@@ -130,17 +118,17 @@ struct WallpaperDetailView: View {
         if liveItem.type == .scene {
             limitationCard(
                 title: "Scene Wallpaper",
-                body: "Wallpaper Engine scenes use a proprietary scene graph (scene.json), binary packages, and desktop-only shaders/particles. Full Metal reimplementation of the WE runtime is not available. If this package contains an embedded video texture, it can still be exported as MP4. Preview images are shown when present."
+                body: "Wallpaper Engine scenes use a proprietary scene graph (scene.json), binary packages, and desktop-only shaders/particles. Full Metal reimplementation of the WE runtime is not available on iOS. Embedded video textures can still be exported as MP4 when present."
             )
         } else if liveItem.type == .web && !canExportVideo {
             limitationCard(
                 title: "Web Wallpaper",
-                body: "Local HTML/CSS/JS can be previewed in WKWebView when assets load. Capturing continuous animation to MP4 requires frame capture from WKWebView, which is limited on iOS for performance and privacy. Use Import of any embedded video for a reliable export path."
+                body: "Local HTML/CSS/JS can be previewed in WKWebView. Continuous frame capture to MP4 from WKWebView is limited on iOS. Import any embedded video for a reliable export path."
             )
         } else if liveItem.type == .application && !canExportVideo {
             limitationCard(
                 title: "Application Wallpaper",
-                body: "Application wallpapers require a Windows executable/runtime that cannot run on iOS. Any extractable video or image assets inside the package are offered for export when detected."
+                body: "Application wallpapers require a Windows executable/runtime that cannot run on iOS. Extractable video assets inside the package are offered for export when detected."
             )
         } else if liveItem.localPath == nil {
             limitationCard(
@@ -186,33 +174,29 @@ struct WallpaperDetailView: View {
 
     private func isLikelyVideoFile(_ url: URL?) -> Bool {
         guard let url else { return false }
-        return ["mp4", "mov", "m4v", "m4v"].contains(url.pathExtension.lowercased())
+        return ["mp4", "mov", "m4v"].contains(url.pathExtension.lowercased())
     }
 
     private func enrichMetadataIfNeeded() async {
-        // If we only have an ID and metadata is thin, try public Workshop page
         if liveItem.previewURL == nil || liveItem.author == nil {
-            let service = SteamWorkshopService()
-            if let enriched = await service.fetchItemMetadata(id: liveItem.id) {
-                await MainActor.run {
-                    var merged = liveItem
-                    if merged.previewURL == nil { merged = WorkshopItem(
-                        id: merged.id,
-                        title: enriched.title.isEmpty ? merged.title : enriched.title,
-                        author: enriched.author ?? merged.author,
-                        previewURL: enriched.previewURL ?? merged.previewURL,
-                        description: enriched.description ?? merged.description,
-                        fileSize: merged.fileSize,
-                        type: merged.type == .unknown ? enriched.type : merged.type,
-                        tags: merged.tags.isEmpty ? enriched.tags : merged.tags,
-                        timeCreated: merged.timeCreated,
-                        timeUpdated: merged.timeUpdated,
-                        isSubscribed: merged.isSubscribed,
-                        localPath: merged.localPath,
-                        availability: merged.availability
-                    )}
-                    liveItem = merged
-                }
+            if let enriched = await workshop.fetchItemMetadata(id: liveItem.id) {
+                var merged = liveItem
+                merged = WorkshopItem(
+                    id: merged.id,
+                    title: enriched.title.isEmpty ? merged.title : enriched.title,
+                    author: enriched.author ?? merged.author,
+                    previewURL: enriched.previewURL ?? merged.previewURL,
+                    description: enriched.description ?? merged.description,
+                    fileSize: merged.fileSize,
+                    type: merged.type == .unknown ? enriched.type : merged.type,
+                    tags: merged.tags.isEmpty ? enriched.tags : merged.tags,
+                    timeCreated: merged.timeCreated,
+                    timeUpdated: merged.timeUpdated,
+                    isSubscribed: merged.isSubscribed,
+                    localPath: merged.localPath,
+                    availability: merged.availability
+                )
+                liveItem = merged
             }
         }
     }
