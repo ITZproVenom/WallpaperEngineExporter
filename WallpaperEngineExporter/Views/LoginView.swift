@@ -56,9 +56,18 @@ struct LoginView: View {
             .disabled(auth.isLoading)
             .padding(.horizontal, 40)
 
+            // Explicit in-app browser path when ASWeb fails / LiveContainer
+            if auth.lastError != nil || SteamAuthenticationService.prefersWebViewAuth {
+                Button("Sign in with in-app browser") {
+                    auth.signInWithWebView()
+                }
+                .font(.subheadline.weight(.medium))
+                .disabled(auth.isLoading)
+            }
+
             Spacer()
 
-            Text("No Steam password is ever entered or stored in this app.\nAuthentication uses the official Steam web flow.")
+            Text("No Steam password is ever entered or stored in this app.\nAuthentication uses the official Steam OpenID flow.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

@@ -18,8 +18,29 @@ final class SteamAuthCallbackTests: XCTestCase {
         XCTAssertNil(SteamAuthenticationService.steamID(fromClaimedID: claimed))
     }
 
-    func testCallbackSchemeMatchesInfoPlist() {
-        // Must stay in sync with Info.plist CFBundleURLSchemes and the HTTPS bridge page
-        XCTAssertEqual("wallpaperexporter", "wallpaperexporter")
+    func testCallbackSchemeConstant() {
+        XCTAssertEqual(SteamAuthenticationService.callbackScheme, "wallpaperexporter")
+    }
+
+    func testReturnToIsHTTPS() {
+        XCTAssertTrue(SteamAuthenticationService.httpsReturnTo.hasPrefix("https://"))
+        XCTAssertFalse(SteamAuthenticationService.httpsReturnTo.contains("jsdelivr"))
+    }
+
+    func testFinishedAssertionDetection() {
+        var c = URLComponents(string: SteamAuthenticationService.httpsReturnTo)!
+        c.queryItems = [
+            URLQueryItem(name: "openid.mode", value: "id_res"),
+            URLQueryItem(name: "openid.claimed_id", value: "https://steamcommunity.com/openid/id/76561198000000000")
+        ]
+        let url = c.url!
+        XCTAssertTrue(SteamAuthenticationService.isFinishedOpenIDAssertion(url))
+        XCTAssertTrue(SteamAuthenticationService.isOpenIDReturnURL(url))
+    }
+
+    func testIntermediateURLNotFinished() {
+        var c = URLComponents(string: "https://steamcommunity.com/openid/login")!
+        c.queryItems = [URLQueryItem(name: "openid.mode", value: "checkid_setup")]
+        XCTAssertFalse(SteamAuthenticationService.isFinishedOpenIDAssertion(c.url!))
     }
 }
