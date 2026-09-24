@@ -25,13 +25,14 @@ enum ExportError: LocalizedError {
     }
 }
 
-actor VideoExporter {
+final class VideoExporter {
     static let shared = VideoExporter()
 
+    private let queue = DispatchQueue(label: "com.itzprovenom.wee.export")
     private var isCancelled = false
 
     func cancel() {
-        isCancelled = true
+        queue.sync { isCancelled = true }
     }
 
     func export(
@@ -42,7 +43,8 @@ actor VideoExporter {
         isCancelled = false
 
         let asset = AVURLAsset(url: source)
-        guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        guard let videoTrack = tracks.first else {
             throw ExportError.noVideoTrack
         }
 
@@ -54,33 +56,40 @@ actor VideoExporter {
         if configuration.resolution == .custom {
             targetSize = CGSize(width: configuration.customWidth, height: configuration.customHeight)
         } else {
-            targetSize = configuration.resolution.size(for: naturalSize.applying(preferredTransform))
+            let transformed = naturalSize.applying(preferredTransform)
+            let absSize = CGSize(width: abs(transformed.width), height: abs(transformed.height))
+            targetSize = configuration.resolution.size(for: absSize)
         }
 
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("WEE_\(UUID().uuidString).mp4")
 
-        // Clean previous if any
         try? FileManager.default.removeItem(at: outputURL)
 
-        guard let writer = try? AVAssetWriter(outputURL: outputURL, fileType: .mp4) else {
+        let writer: AVAssetWriter
+        do {
+            writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
+        } catch {
             throw ExportError.cannotCreateWriter
         }
 
-        let codec: AVVideoCodecType = configuration.codec == .hevc ? .hevc : .h264
+        let codecType: AVVideoCodecType = (configuration.codec == .hevc) ? .hevc : .h264
+        let pixelCount = max(1.0, targetSize.width * targetSize.height)
+        let baseBitrate = 2_000_000.0 * (pixelCount / (1920.0 * 1080.0))
+        let bitrate = Int(baseBitrate * configuration.quality.bitrateMultiplier)
 
-        let bitrate = Int(2_000_000 * configuration.quality.bitrateMultiplier * (targetSize.width * targetSize.height) / (1920 * 1080))
+        var compression: [String: Any] = [
+            AVVideoAverageBitRateKey: bitrate
+        ]
+        if configuration.codec == .h264 {
+            compression[AVVideoProfileLevelKey] = AVVideoProfileLevelH264HighAutoLevel
+        }
 
         let videoSettings: [String: Any] = [
-            AVVideoCodecKey: codec,
+            AVVideoCodecKey: codecType,
             AVVideoWidthKey: Int(targetSize.width),
             AVVideoHeightKey: Int(targetSize.height),
-            AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: bitrate,
-                AVVideoProfileLevelKey: configuration.codec == .hevc
-                    ? AVVideoProfileLevelH264HighAutoLevel // placeholder; real HEVC profile differs
-                    : AVVideoProfileLevelH264HighAutoLevel
-            ]
+            AVVideoCompressionPropertiesKey: compression
         ]
 
         let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
@@ -90,19 +99,27 @@ actor VideoExporter {
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: writerInput,
             sourcePixelBufferAttributes: [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
                 kCVPixelBufferWidthKey as String: Int(targetSize.width),
                 kCVPixelBufferHeightKey as String: Int(targetSize.height)
             ]
         )
 
+        guard writer.canAdd(writerInput) else {
+            throw ExportError.cannotCreateWriter
+        }
         writer.add(writerInput)
 
-        // Reader
         let reader = try AVAssetReader(asset: asset)
-        let readerOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
-        ])
+        let readerOutput = AVAssetReaderTrackOutput(
+            track: videoTrack,
+            outputSettings: [
+                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
+            ]
+        )
+        guard reader.canAdd(readerOutput) else {
+            throw ExportError.encodingFailed("Cannot add reader output")
+        }
         reader.add(readerOutput)
 
         let exportDuration = min(configuration.duration.seconds, CMTimeGetSeconds(duration))
@@ -116,20 +133,25 @@ actor VideoExporter {
 
         progress(ExportProgress(stage: .encoding, fraction: 0))
 
-        var frameCount = 0
-        let totalFramesEstimate = Int(exportDuration * Double(configuration.fps.rawValue))
+        let totalFramesEstimate = max(1, Int(exportDuration * Double(configuration.fps.rawValue)))
 
         return try await withCheckedThrowingContinuation { continuation in
-            writerInput.requestMediaDataWhenReady(on: DispatchQueue(label: "export.queue")) {
-                while writerInput.isReadyForMoreMediaData && !self.isCancelled {
+            var frameCount = 0
+            var finished = false
+
+            writerInput.requestMediaDataWhenReady(on: self.queue) {
+                while writerInput.isReadyForMoreMediaData && !self.isCancelled && !finished {
                     if reader.status == .reading,
                        let sample = readerOutput.copyNextSampleBuffer(),
-                       let pb = CMSampleBufferGetImageBuffer(sample) {
+                       CMSampleBufferIsValid(sample),
+                       let pixelBuffer = CMSampleBufferGetImageBuffer(sample) {
+
                         let pts = CMSampleBufferGetPresentationTimeStamp(sample)
                         let relative = CMTimeSubtract(pts, startTime)
-                        if adaptor.append(pb, withPresentationTime: relative) {
+
+                        if adaptor.append(pixelBuffer, withPresentationTime: relative) {
                             frameCount += 1
-                            let frac = min(1.0, Double(frameCount) / Double(max(totalFramesEstimate, 1)))
+                            let frac = min(1.0, Double(frameCount) / Double(totalFramesEstimate))
                             progress(ExportProgress(
                                 stage: .encoding,
                                 fraction: frac,
@@ -138,7 +160,9 @@ actor VideoExporter {
                             ))
                         }
                     } else {
+                        finished = true
                         writerInput.markAsFinished()
+
                         writer.finishWriting {
                             if self.isCancelled {
                                 try? FileManager.default.removeItem(at: outputURL)
@@ -147,13 +171,17 @@ actor VideoExporter {
                                 progress(ExportProgress(stage: .finishing, fraction: 1.0))
                                 continuation.resume(returning: outputURL)
                             } else {
-                                continuation.resume(throwing: ExportError.encodingFailed(writer.error?.localizedDescription ?? "Unknown"))
+                                let msg = writer.error?.localizedDescription ?? "Unknown writer error"
+                                try? FileManager.default.removeItem(at: outputURL)
+                                continuation.resume(throwing: ExportError.encodingFailed(msg))
                             }
                         }
                         return
                     }
                 }
-                if self.isCancelled {
+
+                if self.isCancelled && !finished {
+                    finished = true
                     writer.cancelWriting()
                     reader.cancelReading()
                     try? FileManager.default.removeItem(at: outputURL)
