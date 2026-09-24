@@ -1,1 +1,76 @@
-// PLACEHOLDER
+// !$*UTF8*$
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* WallpaperEngineExporterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* WallpaperEngineExporterApp.swift */; };
+		A10000000000000000000002 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* RootView.swift */; };
+		A10000000000000000000003 /* SteamUser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* SteamUser.swift */; };
+		A10000000000000000000004 /* WorkshopItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* WorkshopItem.swift */; };
+		A10000000000000000000005 /* ExportConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* ExportConfiguration.swift */; };
+		A10000000000000000000006 /* SteamAuthenticationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* SteamAuthenticationService.swift */; };
+		A10000000000000000000007 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* KeychainHelper.swift */; };
+		A10000000000000000000008 /* SteamWorkshopService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000008 /* SteamWorkshopService.swift */; };
+		A10000000000000000000009 /* WorkshopURLParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000009 /* WorkshopURLParser.swift */; };
+		A1000000000000000000000A /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000A /* LoginView.swift */; };
+		A1000000000000000000000B /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000B /* MainTabView.swift */; };
+		A1000000000000000000000C /* MyWallpapersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000C /* MyWallpapersView.swift */; };
+		A1000000000000000000000D /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000D /* SearchView.swift */; };
+		A1000000000000000000000E /* ImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000E /* ImportView.swift */; };
+		A1000000000000000000000F /* WallpaperDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* WallpaperDetailView.swift */; };
+		A10000000000000000000010 /* ExportSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* ExportSettingsView.swift */; };
+		A10000000000000000000011 /* ExportProgressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* ExportProgressView.swift */; };
+		A10000000000000000000012 /* ExportCompleteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* ExportCompleteView.swift */; };
+		A10000000000000000000013 /* ExportsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* ExportsView.swift */; };
+		A10000000000000000000014 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* SettingsView.swift */; };
+		A10000000000000000000015 /* WallpaperImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000015 /* WallpaperImporter.swift */; };
+		A10000000000000000000016 /* VideoExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000016 /* VideoExporter.swift */; };
+		A10000000000000000000017 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000017 /* Assets.xcassets */; };
+		A10000000000000000000018 /* WorkshopURLParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000018 /* WorkshopURLParserTests.swift */; };
+		A10000000000000000000019 /* ExportConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000019 /* ExportConfigurationTests.swift */; };
+		A1000000000000000000001A /* WallpaperTypeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001A /* WallpaperTypeTests.swift */; };
+		A1000000000000000000001B /* VideoPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001B /* VideoPreviewView.swift */; };
+		A1000000000000000000001C /* WebWallpaperPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001C /* WebWallpaperPreviewView.swift */; };
+		A1000000000000000000001D /* SteamAuthCallbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001D /* SteamAuthCallbackTests.swift */; };
+		A1000000000000000000001E /* SteamLoginWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001E /* SteamLoginWebView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A20000000000000000000001 /* WallpaperEngineExporterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WallpaperEngineExporterApp.swift; sourceTree = "<group>"; };
+		A20000000000000000000002 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		A20000000000000000000003 /* SteamUser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SteamUser.swift; sourceTree = "<group>"; };
+		A20000000000000000000004 /* WorkshopItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkshopItem.swift; sourceTree = "<group>"; };
+		A20000000000000000000005 /* ExportConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportConfiguration.swift; sourceTree = "<group>"; };
+		A20000000000000000000006 /* SteamAuthenticationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SteamAuthenticationService.swift; sourceTree = "<group>"; };
+		A20000000000000000000007 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
+		A20000000000000000000008 /* SteamWorkshopService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SteamWorkshopService.swift; sourceTree = "<group>"; };
+		A20000000000000000000009 /* WorkshopURLParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkshopURLParser.swift; sourceTree = "<group>"; };
+		A2000000000000000000000A /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		A2000000000000000000000B /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
+		A2000000000000000000000C /* MyWallpapersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyWallpapersView.swift; sourceTree = "<group>"; };
+		A2000000000000000000000D /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
+		A2000000000000000000000E /* ImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportView.swift; sourceTree = "<group>"; };
+		A2000000000000000000000F /* WallpaperDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WallpaperDetailView.swift; sourceTree = "<group>"; };
+		A20000000000000000000010 /* ExportSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportSettingsView.swift; sourceTree = "<group>"; };
+		A20000000000000000000011 /* ExportProgressView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportProgressView.swift; sourceTree = "<group>"; };
+		A20000000000000000000012 /* ExportCompleteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportCompleteView.swift; sourceTree = "<group>"; };
+		A20000000000000000000013 /* ExportsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportsView.swift; sourceTree = "<group>"; };
+		A20000000000000000000014 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		A20000000000000000000015 /* WallpaperImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WallpaperImporter.swift; sourceTree = "<group>"; };
+		A20000000000000000000016 /* VideoExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoExporter.swift; sourceTree = "<group>"; };
+		A20000000000000000000017 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A20000000000000000000018 /* WorkshopURLParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkshopURLParserTests.swift; sourceTree = "<group>"; };
+		A20000000000000000000019 /* ExportConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportConfigurationTests.swift; sourceTree = "<group>"; };
+		A2000000000000000000001A /* WallpaperTypeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WallpaperTypeTests.swift; sourceTree = "<group>"; };
+		A2000000000000000000001B /* VideoPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPreviewView.swift; sourceTree = "<group>"; };
+		A2000000000000000000001C /* WebWallpaperPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebWallpaperPreviewView.swift; sourceTree = "<group>"; };
+		A2000000000000000000001D /* SteamAuthCallbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SteamAuthCallbackTests.swift; sourceTree = "<group>"; };
+		A2000000000000000000001E /* SteamLoginWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SteamLoginWebView.swift; sourceTree = "<group>"; };
+		A30000000000000000000001 /* WallpaperEngineExporter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WallpaperEngineExporter.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A30000000000000000000002 /* WallpaperEngineExporterTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WallpaperEngineExporterTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A30000000000000000000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
