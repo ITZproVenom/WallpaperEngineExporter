@@ -1,6 +1,7 @@
 import XCTest
 @testable import WallpaperEngineExporter
 
+@MainActor
 final class SteamAuthCallbackTests: XCTestCase {
     func testClaimedIDExtraction() {
         let claimed = "https://steamcommunity.com/openid/id/76561198000000000"
