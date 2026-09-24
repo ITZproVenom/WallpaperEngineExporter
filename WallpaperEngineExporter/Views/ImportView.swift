@@ -5,6 +5,7 @@ struct ImportView: View {
     @EnvironmentObject var workshop: SteamWorkshopService
     @State private var showImporter = false
     @State private var importedItem: WorkshopItem?
+    @State private var importNotes: String?
     @State private var errorMessage: String?
     @State private var isProcessing = false
 
@@ -18,7 +19,7 @@ struct ImportView: View {
                 Text("Import Wallpaper")
                     .font(.title2.bold())
 
-                Text("Select a Wallpaper Engine project folder, .zip archive, or video file that you legitimately own.")
+                Text("Select a Wallpaper Engine project folder, .zip archive, or video file you legitimately own.")
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal)
@@ -48,10 +49,18 @@ struct ImportView: View {
                         .padding()
                 }
 
+                if let notes = importNotes {
+                    Text(notes)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
+
                 if let item = importedItem {
                     NavigationLink(value: item) {
                         WallpaperCard(item: item)
-                            .padding()
+                            .padding(.horizontal)
                     }
                 }
 
@@ -64,7 +73,9 @@ struct ImportView: View {
             }
             .fileImporter(
                 isPresented: $showImporter,
-                allowedContentTypes: [.folder, .zip, .movie, .mpeg4Movie, .quickTimeMovie, .data],
+                allowedContentTypes: [
+                    .folder, .zip, .movie, .mpeg4Movie, .quickTimeMovie, .data, .item
+                ],
                 allowsMultipleSelection: false
             ) { result in
                 handleImport(result)
@@ -74,6 +85,7 @@ struct ImportView: View {
 
     private func handleImport(_ result: Result<[URL], Error>) {
         errorMessage = nil
+        importNotes = nil
         importedItem = nil
         isProcessing = true
 
@@ -88,10 +100,20 @@ struct ImportView: View {
             }
             Task {
                 do {
-                    let item = try await WallpaperImporter.shared.importFrom(url: url)
+                    let result = try await WallpaperImporter.shared.importFrom(url: url)
                     await MainActor.run {
-                        importedItem = item
-                        workshop.addImported(item)
+                        importedItem = result.item
+                        workshop.addImported(result.item)
+                        var notes: [String] = []
+                        notes.append("Type: \(result.item.type.displayName)")
+                        if let v = result.videoURL {
+                            notes.append("Video source: \(v.lastPathComponent)")
+                        }
+                        if let entry = result.entryFile {
+                            notes.append("Entry: \(entry)")
+                        }
+                        notes.append("Assets found: \(result.assetList.count)")
+                        importNotes = notes.joined(separator: "\n")
                         isProcessing = false
                     }
                 } catch {

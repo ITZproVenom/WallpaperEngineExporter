@@ -4,100 +4,216 @@ struct WallpaperDetailView: View {
     let item: WorkshopItem
     @State private var config = ExportConfiguration()
     @State private var showExport = false
+    @State private var liveItem: WorkshopItem
+
+    init(item: WorkshopItem) {
+        self.item = item
+        _liveItem = State(initialValue: item)
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                // Preview
-                AsyncImage(url: item.previewURL) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFit()
-                    default:
-                        Rectangle()
-                            .fill(.quaternary)
-                            .aspectRatio(16/9, contentMode: .fit)
-                            .overlay {
-                                Image(systemName: "photo")
-                                    .font(.largeTitle)
-                                    .foregroundStyle(.secondary)
-                            }
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 16))
+                previewSection
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(item.title)
+                    Text(liveItem.title)
                         .font(.title2.bold())
-                    if let author = item.author {
+                    if let author = liveItem.author {
                         Text("by \(author)")
                             .foregroundStyle(.secondary)
                     }
-                    Label(item.type.displayName, systemImage: typeIcon)
+                    Label(liveItem.type.displayName, systemImage: typeIcon)
                         .font(.subheadline)
                 }
 
                 Group {
-                    LabeledContent("Workshop ID", value: item.id)
-                    if let size = item.fileSize {
+                    LabeledContent("Workshop ID", value: liveItem.id)
+                    if let size = liveItem.fileSize {
                         LabeledContent("File size", value: ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
                     }
-                    LabeledContent("Availability", value: item.availability.rawValue.capitalized)
+                    LabeledContent("Availability", value: availabilityLabel)
                 }
                 .font(.subheadline)
 
-                if item.type.isExportable && item.localPath != nil {
-                    Button {
-                        showExport = true
-                    } label: {
-                        Label("Export to MP4", systemImage: "square.and.arrow.up")
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(Color.accentColor)
-                            .foregroundStyle(.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 14))
-                    }
-                } else if item.type != .video {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("Unsupported Wallpaper", systemImage: "exclamationmark.triangle")
-                            .font(.headline)
-                            .foregroundStyle(.orange)
-                        Text("This Wallpaper Engine type (\(item.type.displayName)) requires functionality that isn't available on iOS. Only video wallpapers can be fully exported.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding()
-                    .background(Color.orange.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                } else if item.localPath == nil {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("Wallpaper Content Unavailable", systemImage: "externaldrive.badge.exclamationmark")
-                            .font(.headline)
-                        Text("The Workshop information is available, but the actual wallpaper files aren't available to this device. Import the wallpaper through Files.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding()
-                    .background(Color.yellow.opacity(0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                if let desc = liveItem.description, !desc.isEmpty {
+                    Text(desc)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
+
+                actionSection
             }
             .padding()
         }
         .navigationTitle("Details")
         .navigationBarTitleDisplayMode(.inline)
+        .task {
+            await enrichMetadataIfNeeded()
+        }
         .sheet(isPresented: $showExport) {
-            ExportSettingsView(item: item, config: $config)
+            ExportSettingsView(item: liveItem, config: $config)
+        }
+    }
+
+    @ViewBuilder
+    private var previewSection: some View {
+        if liveItem.type == .video,
+           let path = liveItem.localPath,
+           ["mp4", "mov", "m4v"].contains(path.pathExtension.lowercased()) {
+            VideoPreviewView(url: path)
+        } else if liveItem.type == .web,
+                  let path = liveItem.localPath {
+            // path may be root or file
+            let root = path.hasDirectoryPath ? path : path.deletingLastPathComponent()
+            let entry = path.hasDirectoryPath ? "index.html" : path.lastPathComponent
+            WebWallpaperPreviewView(rootDirectory: root, entryFile: entry)
+                .frame(height: 220)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+        } else if let preview = liveItem.previewURL {
+            if preview.isFileURL {
+                AsyncImage(url: preview) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFit()
+                    default:
+                        placeholderPreview
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+            } else {
+                AsyncImage(url: preview) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFit()
+                    default:
+                        placeholderPreview
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+            }
+        } else {
+            placeholderPreview
+        }
+    }
+
+    private var placeholderPreview: some View {
+        Rectangle()
+            .fill(.quaternary)
+            .aspectRatio(16/9, contentMode: .fit)
+            .overlay {
+                Image(systemName: "photo")
+                    .font(.largeTitle)
+                    .foregroundStyle(.secondary)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    @ViewBuilder
+    private var actionSection: some View {
+        let canExportVideo = liveItem.localPath != nil &&
+            (liveItem.type == .video || isLikelyVideoFile(liveItem.localPath))
+
+        if canExportVideo {
+            Button {
+                showExport = true
+            } label: {
+                Label("Export to MP4", systemImage: "square.and.arrow.up")
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.accentColor)
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+            }
+        }
+
+        if liveItem.type == .scene {
+            limitationCard(
+                title: "Scene Wallpaper",
+                body: "Wallpaper Engine scenes use a proprietary scene graph (scene.json), binary packages, and desktop-only shaders/particles. Full Metal reimplementation of the WE runtime is not available. If this package contains an embedded video texture, it can still be exported as MP4. Preview images are shown when present."
+            )
+        } else if liveItem.type == .web && !canExportVideo {
+            limitationCard(
+                title: "Web Wallpaper",
+                body: "Local HTML/CSS/JS can be previewed in WKWebView when assets load. Capturing continuous animation to MP4 requires frame capture from WKWebView, which is limited on iOS for performance and privacy. Use Import of any embedded video for a reliable export path."
+            )
+        } else if liveItem.type == .application && !canExportVideo {
+            limitationCard(
+                title: "Application Wallpaper",
+                body: "Application wallpapers require a Windows executable/runtime that cannot run on iOS. Any extractable video or image assets inside the package are offered for export when detected."
+            )
+        } else if liveItem.localPath == nil {
+            limitationCard(
+                title: "Wallpaper Content Unavailable",
+                body: "Workshop metadata is available, but the actual files are not on this device. Import the wallpaper through Files (project folder, zip, or video)."
+            )
+        }
+    }
+
+    private func limitationCard(title: String, body: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: "exclamationmark.triangle")
+                .font(.headline)
+                .foregroundStyle(.orange)
+            Text(body)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .padding()
+        .background(Color.orange.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var availabilityLabel: String {
+        switch liveItem.availability {
+        case .metadataOnly: return "Metadata only"
+        case .imported: return "Imported"
+        case .readyToExport: return "Ready to export"
+        case .unsupported: return "Unsupported on iOS"
+        case .missingAssets: return "Missing assets"
         }
     }
 
     private var typeIcon: String {
-        switch item.type {
+        switch liveItem.type {
         case .video: return "film"
         case .scene: return "cube"
         case .web: return "globe"
         case .application: return "app"
         case .unknown: return "questionmark"
+        }
+    }
+
+    private func isLikelyVideoFile(_ url: URL?) -> Bool {
+        guard let url else { return false }
+        return ["mp4", "mov", "m4v", "m4v"].contains(url.pathExtension.lowercased())
+    }
+
+    private func enrichMetadataIfNeeded() async {
+        // If we only have an ID and metadata is thin, try public Workshop page
+        if liveItem.previewURL == nil || liveItem.author == nil {
+            let service = SteamWorkshopService()
+            if let enriched = await service.fetchItemMetadata(id: liveItem.id) {
+                await MainActor.run {
+                    var merged = liveItem
+                    if merged.previewURL == nil { merged = WorkshopItem(
+                        id: merged.id,
+                        title: enriched.title.isEmpty ? merged.title : enriched.title,
+                        author: enriched.author ?? merged.author,
+                        previewURL: enriched.previewURL ?? merged.previewURL,
+                        description: enriched.description ?? merged.description,
+                        fileSize: merged.fileSize,
+                        type: merged.type == .unknown ? enriched.type : merged.type,
+                        tags: merged.tags.isEmpty ? enriched.tags : merged.tags,
+                        timeCreated: merged.timeCreated,
+                        timeUpdated: merged.timeUpdated,
+                        isSubscribed: merged.isSubscribed,
+                        localPath: merged.localPath,
+                        availability: merged.availability
+                    )}
+                    liveItem = merged
+                }
+            }
         }
     }
 }
