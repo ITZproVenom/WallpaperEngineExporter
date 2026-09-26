@@ -44,6 +44,24 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate server Python
         run: python3 -m py_compile server/lumaforge-server.py
+      - name: Test job API contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$(mktemp -d)"
+          PORT=18080 WORK_ROOT="$ROOT" WORKSHOP_PROVIDER=invalid python3 server/lumaforge-server.py >"$ROOT/server.log" 2>&1 &
+          PID=$!
+          trap 'kill "$PID" 2>/dev/null || true; wait "$PID" 2>/dev/null || true; rm -rf "$ROOT"' EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/health >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:18080/health | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["ok"] is True; assert x["converter"]=="ffmpeg"'
+          CREATE="$(curl -fsS -X POST http://127.0.0.1:18080/v1/jobs -H "Content-Type: application/json" -d '{"workshop_id":"3714599577"}')"
+          JOB_ID="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["job_id"])' <<<"$CREATE")"
+          test -n "$JOB_ID"
+          curl -fsS "http://127.0.0.1:18080/v1/jobs/$JOB_ID" >"$ROOT/job.json"
+          python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["job_id"]; assert x["status"] in {"queued","downloading","converting","failed","completed"}' <"$ROOT/job.json"
       - name: Build worker image
         run: docker build -t lumaforge-worker:test .
       - name: Verify thin-client boundary
