@@ -8,7 +8,7 @@
 6 = {isa = XCConfigurationList; buildConfigurations = (15,16); defaultConfigurationName = Release;};
 7 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (21); runOnlyForDeploymentPostprocessing = 0;};
 8 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (30); runOnlyForDeploymentPostprocessing = 0;};
-20 = {isa = PBXShellScriptBuildPhase; buildActionMask = 2147483647; files = (); inputPaths = (); outputPaths = (); runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/sh; shellScript = "mkdir -p \"$SRCROOT/LumaDeck/Assets.xcassets/AppIcon.appiconset\"\nsips -s format png \"$SRCROOT/LumaDeck/Assets.xcassets/AppIcon.appiconset/icon.svg\" --out \"$SRCROOT/LumaDeck/Assets.xcassets/AppIcon.appiconset/icon.png\" >/dev/null\n"; };
+20 = {isa = PBXShellScriptBuildPhase; buildActionMask = 2147483647; files = (); inputPaths = (); outputPaths = (); runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/sh; shellScript = "mkdir -p \"$SRCROOT/LumaDeck/Assets.xcassets/AppIcon.appiconset\"\nsips -s format png \"$SRCROOT/LumaDeck/icon.svg\" --out \"$SRCROOT/LumaDeck/Assets.xcassets/AppIcon.appiconset/icon.png\" >/dev/null\n"; };
 9 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
 10 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LumaDeck.app; sourceTree = BUILT_PRODUCTS_DIR;};
 11 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; SWIFT_VERSION = 6.0;}; name = Debug;};
