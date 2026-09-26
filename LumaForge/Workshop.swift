@@ -74,9 +74,21 @@ final class WorkshopStore: ObservableObject {
             let raw = String(html[hr]).replacingOccurrences(of: "&amp;", with: "&")
             guard let page = URL(string: raw.hasPrefix("http") ? raw : "https://steamcommunity.com\(raw)") else { continue }
 
-            let title = String(html[tr])
-                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let ns = html as NSString
+            let start = max(0, m.range.location - 900)
+            let length = min(ns.length - start, m.range.length + 1800)
+            let window = ns.substring(with: NSRange(location: start, length: length))
+            let titleRegex = try? NSRegularExpression(
+                pattern: #"(?is)<a[^>]*(?:href|data-href)\\s*=\\s*["'][^"']*sharedfiles/filedetails/\\?id=\\d+[^"']*["'][^>]*>(.*?)</a>"#
+            )
+            let title = titleRegex?
+                .firstMatch(in: window, range: NSRange(window.startIndex..., in: window))
+                .flatMap { Range($0.range(at: 1), in: window) }
+                .map { String(window[$0]) }
+                .map {
+                    $0.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                } ?? "Untitled"
 
             let ns = html as NSString
             let start = max(0, m.range.location - 1500)
