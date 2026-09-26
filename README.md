@@ -8,7 +8,7 @@ LumaForge is a thin iOS client. The iPhone never receives the raw Wallpaper Engi
 
 1. Enter a Steam Workshop URL or Workshop ID.
 2. LumaForge creates a server job.
-3. The worker uses SteamCMD to acquire the Workshop item.
+3. The worker acquires the Workshop item server-side through GGNetwork, with SteamCMD as a fallback.
 4. The worker extracts ZIP/PKG content and decodes supported TEX assets.
 5. FFmpeg converts the selected media to MP4.
 6. The iPhone downloads only the finished MP4.
@@ -20,7 +20,7 @@ Temporary server files are cleaned automatically.
 
 - `POST /v1/jobs` with `{"workshop_id":"123456789"}`
 - `GET /v1/jobs/{job_id}`
-- `GET /v1/files/{job_id}.mp4`
+- `GET /v1/files/{filename}`
 - `DELETE /v1/jobs/{job_id}`
 - `GET /health`
 
