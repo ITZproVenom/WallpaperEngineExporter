@@ -85,7 +85,7 @@ final class DownloadManager: ObservableObject {
     private func poll(jobID: String) async throws {
         var delay: UInt64 = 500_000_000
 
-        for _ in 0..<360 {
+        for _ in 0..<900 {
             try Task.checkCancellation()
 
             let job = try await getJob(jobID: jobID)
@@ -118,7 +118,7 @@ final class DownloadManager: ObservableObject {
             delay = min(delay * 2, 2_000_000_000)
         }
 
-        throw DownloadError.serverMessage("The server job timed out while waiting for a result.")
+        throw DownloadError.serverMessage("The server job timed out after 30 minutes while waiting for a result.")
     }
 
     private func getJob(jobID: String) async throws -> JobResponse {
