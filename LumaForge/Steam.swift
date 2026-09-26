@@ -94,7 +94,7 @@ final class SteamSession: NSObject, ObservableObject, ASWebAuthenticationPresent
             return
         }
 
-        let session = ASWebAuthenticationSession(url: url, callback: .https(host: "lumaforge.local", path: "/steam-callback")) { [weak self] callback, error in
+        let session = ASWebAuthenticationSession(url: url, callback: .customScheme("lumaforge")) { [weak self] callback, error in
             Task { @MainActor in
                 guard let self else { return }
                 defer { self.signingIn = false }
@@ -111,7 +111,11 @@ final class SteamSession: NSObject, ObservableObject, ASWebAuthenticationPresent
 
         session.presentationContextProvider = self
         auth = session
-        session.start()
+        guard session.start() else {
+            signingIn = false
+            auth = nil
+            return
+        }
     }
 
     func signOut() {
