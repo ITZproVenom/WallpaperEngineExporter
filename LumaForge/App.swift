@@ -200,7 +200,7 @@ struct WorkshopDetail: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 AsyncImage(url: item.previewURL) { phase in
-                    if case .success(let image) { image.resizable().scaledToFill() }
+                    if case .success(let image) = phase { image.resizable().scaledToFill() }
                     else { Rectangle().fill(.quaternary) }
                 }
                 .frame(maxWidth: .infinity).frame(height: 260)
