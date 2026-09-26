@@ -189,6 +189,15 @@ private struct JobResponse: Decodable {
         case jobID = "job_id"
         case status, progress, filename, error
     }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        jobID = try container.decode(String.self, forKey: .jobID)
+        status = try container.decode(String.self, forKey: .status)
+        progress = try container.decodeIfPresent(Int.self, forKey: .progress) ?? 0
+        filename = try container.decodeIfPresent(String.self, forKey: .filename)
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+    }
 }
 
 private struct ServerError: Decodable {
