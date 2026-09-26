@@ -15,4 +15,4 @@ jobs:
       - name: Build
         run: xcodebuild -project LumaForge.xcodeproj -scheme LumaForge -sdk iphonesimulator -configuration Release CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
       - name: Test
-        run: xcodebuild -project LumaForge.xcodeproj -scheme LumaForge -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
+        run: xcodebuild -project LumaForge.xcodeproj -scheme LumaForge -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO -destination 'generic/platform=iOS Simulator' test
