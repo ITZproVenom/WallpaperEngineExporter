@@ -137,9 +137,9 @@ final class DownloadManager: ObservableObject {
 
             let lower = url.absoluteString.lowercased()
             var finalScore = score
-            if /\\.(pkg|zip|7z|rar|tar|gz|mp4|webm|mov|m4v)(?:[?#]|$)/.test(lower) { finalScore += 100 }
-            if /download|direct|transmit|cdn|file/.test(lower) { finalScore += 25 }
-            if /steamcommunity\\.com|steamworkshopdownloader|captcha|cloudflare/.test(lower) { finalScore -= 20 }
+            if lower.range(of: #"\\.(pkg|zip|7z|rar|tar|gz|mp4|webm|mov|m4v)(?:[?#]|$)"#, options: .regularExpression) != nil { finalScore += 100 }
+            if lower.range(of: #"download|direct|transmit|cdn|file"#, options: .regularExpression) != nil { finalScore += 25 }
+            if lower.range(of: #"steamcommunity\\.com|steamworkshopdownloader|captcha|cloudflare"#, options: .regularExpression) != nil { finalScore -= 20 }
             scored.append((finalScore, url))
         }
 
@@ -161,7 +161,7 @@ final class DownloadManager: ObservableObject {
             for match in regex.matches(in: html, range: range) {
                 if let valueRange = Range(match.range, in: html) {
                     let raw = String(html[valueRange]).trimmingCharacters(in: ".,);")
-                    add(raw, score: /download|direct|transmit|cdn|file/.test(raw.lowercased()) ? 60 : 5)
+                    let score = raw.lowercased().range(of: #"download|direct|transmit|cdn|file"#, options: .regularExpression) != nil ? 60 : 5\n                    add(raw, score: score)
                 }
             }
         }
