@@ -14,6 +14,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
+import urllib.parse
 
 APP_ID = "431960"
 HOST = os.getenv("HOST", "0.0.0.0")
