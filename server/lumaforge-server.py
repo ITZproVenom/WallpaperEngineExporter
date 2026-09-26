@@ -103,9 +103,9 @@ def _materialize_provider_file(downloaded, target):
         return content
 
     data = downloaded.read_bytes()
-    if data.startswith(b"\\x89PNG\\r\\n\\x1a\\n"):
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
         destination = content / "workshop.png"
-    elif data.startswith(b"\\xff\\xd8\\xff"):
+    elif data.startswith(b"\xff\xd8\xff"):
         destination = content / "workshop.jpg"
     elif len(data) >= 12 and data[4:8] == b"ftyp":
         destination = content / "workshop.mp4"
@@ -474,7 +474,7 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
 
         if path == "/health":
-            return self.json(200, {"ok": True, "service": "lumaforge", "provider": "steamcmd+ffmpeg"})
+            return self.json(200, {"ok": True, "service": "lumaforge", "providers": WORKSHOP_PROVIDER, "converter": "ffmpeg"})
 
         if path.startswith("/v1/jobs/"):
             if not self.authorized():
