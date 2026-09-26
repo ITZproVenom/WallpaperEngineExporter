@@ -245,6 +245,20 @@ struct LibraryView: View {
                                     Task { await store.export(url); busy = false }
                                 }.buttonStyle(.borderedProminent)
                             }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    store.deleteImported(url)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    store.deleteImported(url)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
                         }
                     }
                 }
