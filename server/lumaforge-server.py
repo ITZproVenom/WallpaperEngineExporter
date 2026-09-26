@@ -198,6 +198,15 @@ def ffmpeg_image_to_mp4(image, output):
     ], timeout=180)
 
 
+def ffmpeg_gif_to_mp4(source, output):
+    run([
+        "ffmpeg", "-y", "-i", str(source),
+        "-vf", "fps=30,format=yuv420p",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+        "-movflags", "+faststart", str(output)
+    ], timeout=900)
+
+
 def ffmpeg_video_to_mp4(source, output):
     run([
         "ffmpeg", "-y", "-i", str(source),
@@ -368,15 +377,20 @@ def safe_extract_zip(archive, target):
 def locate_source(content, scratch):
     media = {".mp4", ".mov", ".m4v", ".webm", ".png", ".jpg", ".jpeg", ".gif", ".webp"}
     files = [p for p in content.rglob("*") if p.is_file()]
+
+    # Never choose preview.jpg/thumbnail assets before the actual wallpaper.
+    # Workshop scene wallpapers commonly contain a preview image next to scene.pkg.
+    # Prefer native video, then an animated preview, then the package, and only
+    # use a loose still image as the final fallback.
     videos = [p for p in files if p.suffix.lower() in {".mp4", ".mov", ".m4v", ".webm"}]
     if videos:
         return videos[0]
 
-    images = [p for p in files if p.suffix.lower() in media - {".mp4", ".mov", ".m4v", ".webm"}]
-    if images:
-        return images[0]
+    gifs = [p for p in files if p.suffix.lower() == ".gif"]
+    if gifs:
+        return gifs[0]
 
-    zips = [p for p in files if p.suffix.lower() in {".zip"}]
+    zips = [p for p in files if p.suffix.lower() == ".zip"]
     for z in zips:
         target = scratch / ("zip-" + uuid.uuid4().hex)
         target.mkdir()
@@ -391,11 +405,28 @@ def locate_source(content, scratch):
 
     pkgs = [p for p in files if p.suffix.lower() == ".pkg" or p.name.lower().endswith(".pkg")]
     for pkg in pkgs:
-        pkg_dir = scratch / "pkg"
+        pkg_dir = scratch / ("pkg-" + uuid.uuid4().hex)
         pkg_dir.mkdir(parents=True, exist_ok=True)
         found = extract_pkg(pkg, pkg_dir)
         if found:
             return found[0]
+
+    images = [
+        p for p in files
+        if p.suffix.lower() in media - {".mp4", ".mov", ".m4v", ".webm", ".gif"}
+        and p.name.lower() not in {"preview.jpg", "preview.jpeg", "thumbnail.jpg", "thumbnail.jpeg", "cover.jpg", "cover.png"}
+    ]
+    if images:
+        return images[0]
+
+    # A preview is still preferable to a hard failure when the Workshop item
+    # only ships its preview image alongside an unsupported package.
+    previews = [
+        p for p in files
+        if p.name.lower() in {"preview.jpg", "preview.jpeg", "thumbnail.jpg", "thumbnail.jpeg", "cover.jpg", "cover.png"}
+    ]
+    if previews:
+        return previews[0]
 
     raise RuntimeError("No convertible media was found in the Workshop package")
 
@@ -415,6 +446,8 @@ def process_job(job_id, workshop_id):
             source = locate_source(content, scratch)
             if source.suffix.lower() in {".mp4", ".mov", ".m4v", ".webm"}:
                 ffmpeg_video_to_mp4(source, output)
+            elif source.suffix.lower() == ".gif":
+                ffmpeg_gif_to_mp4(source, output)
             else:
                 ffmpeg_image_to_mp4(source, output)
             set_job(job_id, status="completed", progress=100,
