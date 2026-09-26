@@ -300,8 +300,10 @@ def process_job(job_id, workshop_id):
                     filename=output.name,
                     download_url=f"{PUBLIC_BASE_URL}/v1/files/{output.name}" if PUBLIC_BASE_URL else None)
         except subprocess.TimeoutExpired:
+            print(f"[lumaforge] job {job_id} timed out for workshop {workshop_id}", flush=True)
             set_job(job_id, status="failed", progress=100, error="Server conversion timed out")
         except Exception as exc:
+            print(f"[lumaforge] job {job_id} failed for workshop {workshop_id}: {exc}", flush=True)
             set_job(job_id, status="failed", progress=100, error=str(exc))
         finally:
             shutil.rmtree(work, ignore_errors=True)
@@ -407,4 +409,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    print(f"[lumaforge] starting on {HOST}:{PORT}; steamcmd={STEAMCMD}; root={ROOT}", flush=True)
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
