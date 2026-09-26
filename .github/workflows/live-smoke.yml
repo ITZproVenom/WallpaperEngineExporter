@@ -81,3 +81,5 @@ jobs:
           fi
 
 # live worker verification
+
+# rerun after SteamCMD ordering fix
