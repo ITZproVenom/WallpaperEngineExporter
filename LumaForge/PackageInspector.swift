@@ -190,6 +190,7 @@ enum PackageInspector {
     private static func inflateRaw(_ data: Data, expectedSize: Int) throws -> Data {
         var stream = z_stream()
         var output = Data(count: max(expectedSize, 1))
+        var decodedSize = 0
 
         let result: Int32 = data.withUnsafeBytes { source in
             output.withUnsafeMutableBytes { destination in
@@ -218,14 +219,15 @@ enum PackageInspector {
                     return inflateResult
                 }
 
-                output.count = Int(stream.total_out)
+                decodedSize = Int(stream.total_out)
                 return Z_OK
             }
         }
 
-        guard result == Z_OK, !output.isEmpty else {
+        guard result == Z_OK, decodedSize > 0 else {
             throw ExportError.unsupported
         }
+        output.count = decodedSize
         return output
     }
 
