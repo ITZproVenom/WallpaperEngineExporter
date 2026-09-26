@@ -1,0 +1,5 @@
+import Foundation
+struct PackageAsset:Identifiable,Hashable{let id=UUID();let url:URL;let kind:String}
+enum PackageInspector{
+ static func assets(in url:URL)throws->[PackageAsset]{let ext=url.pathExtension.lowercased();if ["png","jpg","jpeg","mp4","mov","m4v"].contains(ext){return[.init(url:url,kind:ext.uppercased())]};let data=try Data(contentsOf:url);let b=[UInt8](data);var out:[PackageAsset]=[];if let i=b.firstIndex(of:0x89),i+8<=b.count,Array(b[i..<i+8])==[0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A]{let u=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("png");try data.subdata(in:i..<b.count).write(to:u);out.append(.init(url:u,kind:"PNG"))};if b.count>3{for i in 0..<(b.count-3) where b[i]==0xFF && b[i+1]==0xD8 && b[i+2]==0xFF{let u=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg");try data.subdata(in:i..<b.count).write(to:u);out.append(.init(url:u,kind:"JPG"));break}};if out.isEmpty{throw ExportError.unsupported};return out}
+}
