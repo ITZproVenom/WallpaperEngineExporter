@@ -90,20 +90,19 @@ final class WorkshopStore: ObservableObject {
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                 } ?? "Untitled"
 
-            let ns = html as NSString
-            let start = max(0, m.range.location - 1500)
-            let window = ns.substring(with: NSRange(
-                location: start,
-                length: min(ns.length - start, m.range.length + 2800)
+            let previewWindowStart = max(0, m.range.location - 1500)
+            let previewWindow = ns.substring(with: NSRange(
+                location: previewWindowStart,
+                length: min(ns.length - previewWindowStart, m.range.length + 2800)
             ))
             let p = try? NSRegularExpression(
                 pattern: #"https?://[^"' ]+\.(?:jpg|jpeg|png|webp)"#,
                 options: .caseInsensitive
             )
             let preview = p?
-                .firstMatch(in: window, range: NSRange(window.startIndex..., in: window))
-                .flatMap { Range($0.range, in: window) }
-                .flatMap { URL(string: String(window[$0]).replacingOccurrences(of: "&amp;", with: "&")) }
+                .firstMatch(in: previewWindow, range: NSRange(previewWindow.startIndex..., in: previewWindow))
+                .flatMap { Range($0.range, in: previewWindow) }
+                .flatMap { URL(string: String(previewWindow[$0]).replacingOccurrences(of: "&amp;", with: "&")) }
 
             out.append(.init(
                 id: id,
