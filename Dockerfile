@@ -22,6 +22,7 @@ RUN dpkg --add-architecture i386 \
  && curl -fsSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz | tar -xz -C /opt/steamcmd \
  && chmod +x /opt/steamcmd/steamcmd.sh \
  && curl -fsSL https://cdn.jsdelivr.net/npm/webwallgl@1.4.2/webwallgl.min.mjs -o /opt/lumaforge-renderer/webwallgl.min.mjs \
+ && curl -fsSL https://cdn.jsdelivr.net/npm/webwallgl@1.4.2/LICENSE -o /opt/lumaforge-renderer/WEBWALLGL-LICENSE \
  && cd /opt/lumaforge-renderer \
  && npm init -y >/dev/null 2>&1 \
  && npm install --omit=dev --no-audit --no-fund puppeteer-core@24.20.0 \
