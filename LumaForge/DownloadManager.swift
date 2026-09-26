@@ -96,6 +96,7 @@ enum DownloadError: LocalizedError {
     case noDirectFile
     case resolverHTTP(Int)
     case resolverFailed
+    case resolverMessage(String)
 
     var errorDescription: String? {
         switch self {
@@ -107,6 +108,8 @@ enum DownloadError: LocalizedError {
             return "Workshop resolver returned HTTP \(code)."
         case .resolverFailed:
             return "The Workshop download resolver returned no download URL."
+        case .resolverMessage(let message):
+            return message
         }
     }
 }
@@ -154,79 +157,39 @@ enum SteamWorkshopAPI {
     }
 
     static func resolvedDownloadURL(for id: String) async throws -> URL {
-        var request = URLRequest(
-            url: URL(string: "https://api.ggntw.com/steam.request")!
-        )
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
-        request.setValue("https://ggntw.com", forHTTPHeaderField: "Origin")
-        request.setValue("https://ggntw.com/", forHTTPHeaderField: "Referer")
-        request.setValue(
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1",
-            forHTTPHeaderField: "User-Agent"
-        )
+        var components = URLComponents(
+            string: "https://fswswvhpszebuxnloysy.supabase.co/functions/v1/lumaforge-workshop-resolver"
+        )!
+        components.queryItems = [URLQueryItem(name: "id", value: id)]
 
-        let workshopURL = "https://steamcommunity.com/sharedfiles/filedetails/?id=\(id)"
-        request.httpBody = try JSONSerialization.data(
-            withJSONObject: ["url": workshopURL]
-        )
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "GET"
+        request.setValue("LumaForge/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
 
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse,
-              (200..<300).contains(http.statusCode) else {
-            throw DownloadError.resolverHTTP((response as? HTTPURLResponse)?.statusCode ?? -1)
-        }
-
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        guard let http = response as? HTTPURLResponse else {
             throw DownloadError.resolverFailed
         }
 
-        // GGNetwork has returned both { "url": ... } / { "download_url": ... }
-        // and the older { "response": { "url": ... } } shape. Walk the JSON
-        // recursively so changes in nesting do not break downloads.
-        if let url = firstHTTPURL(in: object) {
-            return url
+        guard (200..<300).contains(http.statusCode) else {
+            if let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let message = payload["error"] as? String,
+               !message.isEmpty {
+                throw DownloadError.resolverMessage(message)
+            }
+            throw DownloadError.resolverHTTP(http.statusCode)
         }
 
-        throw DownloadError.resolverFailed
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let value = object["download_url"] as? String,
+              let url = URL(string: value),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            throw DownloadError.resolverFailed
+        }
+
+        return url
     }
 
-    private static func firstHTTPURL(in value: Any) -> URL? {
-        if let string = value as? String,
-           let url = URL(string: string),
-           let scheme = url.scheme?.lowercased(),
-           scheme == "http" || scheme == "https" {
-            return url
-        }
-
-        if let dictionary = value as? [String: Any] {
-            let preferredKeys = [
-                "download_url", "downloadUrl", "url", "link", "file", "download"
-            ]
-
-            for key in preferredKeys {
-                if let candidate = dictionary[key],
-                   let url = firstHTTPURL(in: candidate) {
-                    return url
-                }
-            }
-
-            for (_, candidate) in dictionary {
-                if let url = firstHTTPURL(in: candidate) {
-                    return url
-                }
-            }
-        }
-
-        if let array = value as? [Any] {
-            for candidate in array {
-                if let url = firstHTTPURL(in: candidate) {
-                    return url
-                }
-            }
-        }
-
-        return nil
-    }
 }
