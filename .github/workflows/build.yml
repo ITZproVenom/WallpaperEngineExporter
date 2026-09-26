@@ -19,8 +19,14 @@ jobs:
         run: |
           mkdir -p build/Payload
           cp -R build/LumaForge.xcarchive/Products/Applications/LumaForge.app build/Payload/
+          test -f build/Payload/LumaForge.app/Info.plist
+          test -f build/Payload/LumaForge.app/Assets.car
+          test -x build/Payload/LumaForge.app/LumaForge
+          test "$(stat -f%z build/Payload/LumaForge.app/LumaForge)" -gt 100000
           cd build
           zip -qry LumaForge-unsigned.ipa Payload
+          unzip -t LumaForge-unsigned.ipa >/dev/null
+          test -s LumaForge-unsigned.ipa
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
@@ -36,3 +42,6 @@ jobs:
         run: python3 -m py_compile server/lumaforge-server.py
       - name: Build worker image
         run: docker build -t lumaforge-worker:test .
+      - name: Verify thin-client boundary
+        run: |
+          ! grep -R "AVFoundation\|AVAssetExportSession\|PackageInspector" LumaForge --include='*.swift'
