@@ -93,7 +93,13 @@ final class SteamSession: NSObject, ObservableObject, ASWebAuthenticationPresent
             .init(name: "openid.return_to", value: callback.url!.appending(queryItems: [
                 URLQueryItem(name: "state", value: state)
             ]).absoluteString),
-            .init(name: "openid.realm", value: callback.url!.deletingLastPathComponent().deletingLastPathComponent().absoluteString + "/"),
+            .init(name: "openid.realm", value: {
+                var realm = URLComponents()
+                realm.scheme = callback.url?.scheme
+                realm.host = callback.url?.host
+                realm.port = callback.url?.port
+                return realm.url?.absoluteString ?? "https://lumaforge-worker.onrender.com/"
+            }()),
             .init(name: "openid.identity", value: "http://specs.openid.net/auth/2.0/identifier_select"),
             .init(name: "openid.claimed_id", value: "http://specs.openid.net/auth/2.0/identifier_select")
         ]
