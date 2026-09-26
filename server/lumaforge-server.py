@@ -428,5 +428,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"[lumaforge] starting on {HOST}:{PORT}; steamcmd={STEAMCMD}; root={ROOT}; authenticated={bool(os.getenv(\"STEAM_USERNAME\"))}", flush=True)
+    authenticated = bool(os.getenv("STEAM_USERNAME"))
+    print(f"[lumaforge] starting on {HOST}:{PORT}; steamcmd={STEAMCMD}; root={ROOT}; authenticated={authenticated}", flush=True)
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
