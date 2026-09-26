@@ -6,6 +6,8 @@ final class DownloadManager: ObservableObject {
     @Published private(set) var downloadedURL: URL?
     @Published var error: String?
 
+    private static let maxHTMLHops = 4
+
     func download(_ text: String) {
         guard let url = Self.validURL(text) else {
             error = "Paste a valid Steam Workshop link or download URL."
@@ -34,7 +36,7 @@ final class DownloadManager: ObservableObject {
         }
     }
 
-    private func downloadURL(_ url: URL, alreadyMarked: Bool = false) async {
+    private func downloadURL(_ url: URL, alreadyMarked: Bool = false, hop: Int = 0) async {
         if !alreadyMarked {
             downloading = true
             error = nil
@@ -45,13 +47,31 @@ final class DownloadManager: ObservableObject {
         }
 
         do {
+            guard hop <= Self.maxHTMLHops else {
+                throw DownloadError.tooManyRedirectPages
+            }
+
             var request = URLRequest(url: url)
             request.setValue("LumaForge/1.0", forHTTPHeaderField: "User-Agent")
+            request.setValue("application/octet-stream, text/html;q=0.8, */*;q=0.5", forHTTPHeaderField: "Accept")
 
             let (temporaryURL, response) = try await URLSession.shared.download(for: request)
             guard let http = response as? HTTPURLResponse,
                   (200..<300).contains(http.statusCode) else {
                 throw DownloadError.httpStatus((response as? HTTPURLResponse)?.statusCode ?? -1)
+            }
+
+            if Self.looksLikeHTML(response: http, fileURL: temporaryURL) {
+                let html = try String(contentsOf: temporaryURL, encoding: .utf8)
+                let candidates = Self.extractDownloadCandidates(from: html, baseURL: response.url ?? url)
+
+                guard let next = candidates.first else {
+                    throw DownloadError.htmlWithoutDownload
+                }
+
+                try? FileManager.default.removeItem(at: temporaryURL)
+                await downloadURL(next, alreadyMarked: true, hop: hop + 1)
+                return
             }
 
             let filename = Self.filename(
@@ -76,15 +96,101 @@ final class DownloadManager: ObservableObject {
         return url
     }
 
+    static func looksLikeHTML(response: HTTPURLResponse, fileURL: URL) -> Bool {
+        if let type = response.mimeType?.lowercased(), type.contains("html") {
+            return true
+        }
+
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return false }
+        defer { try? handle.close() }
+
+        guard let data = try? handle.read(upToCount: 2048),
+              let text = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() else {
+            return false
+        }
+
+        return text.hasPrefix("<!doctype html") ||
+               text.hasPrefix("<html") ||
+               text.hasPrefix("<head") ||
+               text.hasPrefix("<body") ||
+               text.contains("<html") ||
+               text.contains("<!doctype html")
+    }
+
+    static func extractDownloadCandidates(from html: String, baseURL: URL) -> [URL] {
+        var scored: [(score: Int, url: URL)] = []
+        var seen = Set<String>()
+
+        func add(_ raw: String, score: Int) {
+            let cleaned = decodeHTMLEntities(
+                raw.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+                    .replacingOccurrences(of: "\\/", with: "/")
+            )
+            guard !cleaned.isEmpty,
+                  let url = URL(string: cleaned, relativeTo: baseURL)?.absoluteURL,
+                  let scheme = url.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https",
+                  url.absoluteString != baseURL.absoluteString,
+                  seen.insert(url.absoluteString).inserted else { return }
+
+            let lower = url.absoluteString.lowercased()
+            var finalScore = score
+            if /\\.(pkg|zip|7z|rar|tar|gz|mp4|webm|mov|m4v)(?:[?#]|$)/.test(lower) { finalScore += 100 }
+            if /download|direct|transmit|cdn|file/.test(lower) { finalScore += 25 }
+            if /steamcommunity\\.com|steamworkshopdownloader|captcha|cloudflare/.test(lower) { finalScore -= 20 }
+            scored.append((finalScore, url))
+        }
+
+        let attrPattern = #"(?:href|src|data-url|data-download-url|data-href|data-file|action)\\s*=\\s*[\"']([^\"']+)[\"']"# 
+        if let regex = try? NSRegularExpression(pattern: attrPattern, options: [.caseInsensitive]) {
+            let range = NSRange(html.startIndex..<html.endIndex, in: html)
+            for match in regex.matches(in: html, range: range) {
+                if let valueRange = Range(match.range(at: 1), in: html) {
+                    let raw = String(html[valueRange])
+                    let context = String(html[max(html.startIndex, valueRange.lowerBound.advanced(by: -180))..<min(html.endIndex, valueRange.upperBound.advanced(by: 180))]).lowercased()
+                    add(raw, score: /download|direct|transmit/.test(context) ? 80 : 20)
+                }
+            }
+        }
+
+        let absolutePattern = #"https?://[^\"'<>\\s]+?"#
+        if let regex = try? NSRegularExpression(pattern: absolutePattern, options: [.caseInsensitive]) {
+            let range = NSRange(html.startIndex..<html.endIndex, in: html)
+            for match in regex.matches(in: html, range: range) {
+                if let valueRange = Range(match.range, in: html) {
+                    let raw = String(html[valueRange]).trimmingCharacters(in: ".,);")
+                    add(raw, score: /download|direct|transmit|cdn|file/.test(raw.lowercased()) ? 60 : 5)
+                }
+            }
+        }
+
+        return scored
+            .sorted {
+                if $0.score != $1.score { return $0.score > $1.score }
+                return $0.url.absoluteString.count < $1.url.absoluteString.count
+            }
+            .map(\\.url)
+    }
+
+    private static func decodeHTMLEntities(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&quot;", with: """)
+            .replacingOccurrences(of: "&#x27;", with: "'")
+            .replacingOccurrences(of: "&#39;", with: "'")
+    }
+
     private static func filename(response: HTTPURLResponse, fallback: String) -> String {
         if let disposition = response.value(forHTTPHeaderField: "Content-Disposition"),
            let range = disposition.range(
-                of: #"filename="?([^";]+)"?"#,
+                of: #\"filename=\"?([^\";]+)\"?\"#,
                 options: .regularExpression
            ) {
             let value = String(disposition[range])
                 .replacingOccurrences(of: "filename=", with: "")
-                .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                .trimmingCharacters(in: CharacterSet(charactersIn: """))
             if !value.isEmpty { return value }
         }
         return fallback.removingPercentEncoding ?? fallback
@@ -97,6 +203,8 @@ enum DownloadError: LocalizedError {
     case resolverHTTP(Int)
     case resolverFailed
     case resolverMessage(String)
+    case htmlWithoutDownload
+    case tooManyRedirectPages
 
     var errorDescription: String? {
         switch self {
@@ -110,6 +218,10 @@ enum DownloadError: LocalizedError {
             return "The Workshop download resolver returned no download URL."
         case .resolverMessage(let message):
             return message
+        case .htmlWithoutDownload:
+            return "The Workshop downloader returned a webpage without a usable file link."
+        case .tooManyRedirectPages:
+            return "The Workshop downloader returned too many intermediate webpages."
         }
     }
 }
@@ -191,5 +303,4 @@ enum SteamWorkshopAPI {
 
         return url
     }
-
 }
