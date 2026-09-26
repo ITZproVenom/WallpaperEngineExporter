@@ -1,6 +1,7 @@
 import XCTest
 @testable import LumaForge
 
+@MainActor
 final class LumaForgeTests: XCTestCase {
     func testSteamIDValidation() {
         let u = URL(string: "lumaforge://steam-callback?state=test&openid.mode=id_res&openid.op_endpoint=https%3A%2F%2Fsteamcommunity.com%2Fopenid%2Flogin&openid.claimed_id=https%3A%2F%2Fsteamcommunity.com%2Fprofiles%2F76561198000000000")!
