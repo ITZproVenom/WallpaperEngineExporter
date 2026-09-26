@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
+import ipaddress
 import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import tempfile
 import threading
@@ -81,14 +83,28 @@ def run(cmd, timeout=600):
     return result.stdout
 
 
-def _download_url_to_file(url, destination, timeout=900):
+def _validate_download_url(url):
     parsed = urlparse(url)
     if parsed.scheme != "https":
         raise RuntimeError("Downloader returned a non-HTTPS URL")
     host = (parsed.hostname or "").lower()
-    if not host or host in {"localhost", "127.0.0.1", "::1"} or host.endswith(".local"):
+    if not host or host.endswith(".local"):
         raise RuntimeError("Downloader returned an unsafe URL")
 
+    try:
+        addresses = {item[4][0] for item in socket.getaddrinfo(host, parsed.port or 443, type=socket.SOCK_STREAM)}
+    except socket.gaierror as exc:
+        raise RuntimeError(f"Downloader URL host could not be resolved: {host}") from exc
+
+    for address in addresses:
+        ip = ipaddress.ip_address(address)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+            raise RuntimeError("Downloader returned an unsafe URL")
+    return parsed
+
+
+def _download_url_to_file(url, destination, timeout=900):
+    _validate_download_url(url)
     destination.parent.mkdir(parents=True, exist_ok=True)
     request = urllib.request.Request(url, headers={
         "User-Agent": "LumaForge/3.0",
@@ -96,6 +112,7 @@ def _download_url_to_file(url, destination, timeout=900):
     })
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
+            _validate_download_url(response.geturl())
             length = response.headers.get("Content-Length")
             if length and int(length) > MAX_DOWNLOAD_BYTES:
                 raise RuntimeError("Workshop download exceeds server size limit")
