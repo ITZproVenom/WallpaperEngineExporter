@@ -62,23 +62,16 @@ struct WorkshopView: View {
                     }
 
                     HStack {
-                        TextField("Paste Steam Workshop link", text: $directLink)
+                        TextField("Paste Steam Workshop link or ID", text: $directLink)
                             .textFieldStyle(.roundedBorder)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
-                        Button("Download") {
+                        Button("Convert") {
                             guard let id = Self.workshopID(from: directLink) else {
-                                downloader.error = "Paste a Steam Workshop item link with an ?id= number."
+                                downloader.error = "Paste a Steam Workshop item link or numeric Workshop ID."
                                 return
                             }
-                            downloadingID = id
-                            Task {
-                                await downloader.downloadWorkshopItem(id: id)
-                                if let url = downloader.downloadedURL {
-                                    exports.importFiles([url])
-                                }
-                                downloadingID = nil
-                            }
+                            startDownload(id)
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(downloader.downloading)
@@ -88,7 +81,12 @@ struct WorkshopView: View {
                         Text(error).font(.footnote).foregroundStyle(.red)
                     }
                     if downloader.downloading {
-                        ProgressView("Downloading…")
+                        VStack(alignment: .leading, spacing: 8) {
+                            ProgressView(value: downloader.progress)
+                            Text(downloader.status)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
                     }
 
                     HStack {
@@ -115,12 +113,7 @@ struct WorkshopView: View {
                                     .buttonStyle(.plain)
 
                                     Button {
-                                        downloadingID = item.id
-                                        Task {
-                                            await downloader.downloadWorkshopItem(id: item.id)
-                                            if let url = downloader.downloadedURL { exports.importFiles([url]) }
-                                            downloadingID = nil
-                                        }
+                                        startDownload(item.id)
                                     } label: {
                                         Image(systemName: downloadingID == item.id ? "arrow.down.circle.fill" : "arrow.down.circle")
                                     }
@@ -159,12 +152,23 @@ struct WorkshopView: View {
         }
     }
 
+    private func startDownload(_ id: String) {
+        downloadingID = id
+        Task {
+            await downloader.downloadWorkshopItem(id: id)
+            if let url = downloader.downloadedURL {
+                exports.importServerMP4(url, workshopID: id)
+            }
+            downloadingID = nil
+        }
+    }
+
     private static func workshopID(from text: String) -> String? {
-        if let url = URL(string: text),
-           let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "id" })?.value,
-           query.allSatisfy(\.isNumber) { return query }
+        if let url = URL(string: text), let id = DownloadManager.workshopID(from: url) {
+            return id
+        }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.allSatisfy(\.isNumber) && trimmed.count > 5 ? trimmed : nil
+        return trimmed.count >= 6 && trimmed.count <= 20 && trimmed.allSatisfy(\.isNumber) ? trimmed : nil
     }
 }
 
@@ -196,14 +200,14 @@ struct WorkshopDetail: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 AsyncImage(url: item.previewURL) { phase in
-                    if case .success(let image) = phase { image.resizable().scaledToFill() }
+                    if case .success(let image) { image.resizable().scaledToFill() }
                     else { Rectangle().fill(.quaternary) }
                 }
                 .frame(maxWidth: .infinity).frame(height: 260)
                 .clipShape(RoundedRectangle(cornerRadius: 24))
                 Text(item.title).font(.title.bold())
                 Text("Workshop ID \(item.id)").foregroundStyle(.secondary)
-                Text("Paste the Workshop link on the Workshop screen to download when Steam exposes a direct file.")
+                Text("Conversion runs on the LumaForge server. The iPhone receives only the final MP4.")
                     .foregroundStyle(.secondary)
                 Button { openURL(item.pageURL) } label: {
                     Label("Open Workshop", systemImage: "safari").frame(maxWidth: .infinity)
@@ -218,43 +222,35 @@ struct WorkshopDetail: View {
 
 struct LibraryView: View {
     @ObservedObject var store: ExportStore
-    @State private var pick = false
-    @State private var busy = false
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    Button { pick = true } label: { Label("Import from Files", systemImage: "doc.badge.plus") }
-                    Text("Downloaded Workshop files and manually imported media appear here.")
-                        .font(.footnote).foregroundStyle(.secondary)
+                    Label("Server-completed MP4s are stored here.", systemImage: "server.rack")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
-                Section("Imported") {
-                    let urls = store.importedURLs()
-                    if urls.isEmpty { ContentUnavailableView("Library empty", systemImage: "square.stack.3d.up") }
-                    else {
-                        ForEach(urls, id: \.self) { url in
+                Section("Downloads") {
+                    if store.records.isEmpty {
+                        ContentUnavailableView("Library empty", systemImage: "square.stack.3d.up")
+                    } else {
+                        ForEach(store.records) { record in
                             HStack {
-                                Image(systemName: "doc")
+                                Image(systemName: "film")
                                 VStack(alignment: .leading) {
-                                    Text(url.lastPathComponent).lineLimit(1)
-                                    Text(url.pathExtension.uppercased()).font(.caption).foregroundStyle(.secondary)
+                                    Text(record.name).lineLimit(1)
+                                    Text("Workshop \(record.workshopID)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                Button("Export") {
-                                    busy = true
-                                    Task { await store.export(url); busy = false }
-                                }.buttonStyle(.borderedProminent)
+                                ShareLink(item: store.url(for: record)) {
+                                    Image(systemName: "square.and.arrow.up")
+                                }
                             }
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 Button(role: .destructive) {
-                                    store.deleteImported(url)
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
-                            }
-                            .contextMenu {
-                                Button(role: .destructive) {
-                                    store.deleteImported(url)
+                                    store.delete(record)
                                 } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
@@ -264,10 +260,6 @@ struct LibraryView: View {
                 }
             }
             .navigationTitle("Library")
-            .fileImporter(isPresented: $pick, allowedContentTypes: [.data, .image, .movie], allowsMultipleSelection: true) { result in
-                if case .success(let urls) = result { store.importFiles(urls) }
-            }
-            .overlay { if busy { ProgressView().padding(20).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18)) } }
         }
     }
 }
@@ -277,22 +269,30 @@ struct HistoryView: View {
     var body: some View {
         NavigationStack {
             List {
-                if store.records.isEmpty { ContentUnavailableView("No exports", systemImage: "arrow.down.circle") }
-                else {
+                if store.records.isEmpty {
+                    ContentUnavailableView("No downloads", systemImage: "arrow.down.circle")
+                } else {
                     ForEach(store.records) { record in
                         HStack {
                             Image(systemName: "film")
                             VStack(alignment: .leading) {
                                 Text(record.name).lineLimit(1)
-                                Text(record.createdAt.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+                                Text(record.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
                             Spacer()
-                            ShareLink(item: store.url(for: record)) { Image(systemName: "square.and.arrow.up") }
+                            ShareLink(item: store.url(for: record)) {
+                                Image(systemName: "square.and.arrow.up")
+                            }
                         }
                     }
-                    .onDelete { offsets in offsets.map { store.records[$0] }.forEach(store.delete) }
+                    .onDelete { offsets in
+                        offsets.map { store.records[$0] }.forEach(store.delete)
+                    }
                 }
-            }.navigationTitle("Exports")
+            }
+            .navigationTitle("Downloads")
         }
     }
 }
@@ -310,11 +310,17 @@ struct SettingsView: View {
                         Button("Sign in with Steam") { steam.signIn() }
                     }
                 }
+                Section("Server") {
+                    Text("Workshop packages, extraction, TEX decoding, and MP4 conversion run on the LumaForge server.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
                 Section("App") {
-                    LabeledContent("Version", value: "1.0.0")
+                    LabeledContent("Version", value: "2.0.0")
                     LabeledContent("Workshop App ID", value: "431960")
                 }
-            }.navigationTitle("Settings")
+            }
+            .navigationTitle("Settings")
         }
     }
 }
