@@ -1,10 +1,7 @@
 import SwiftUI
 import AVFoundation
 import AuthenticationServices
-import CryptoKit
-import PhotosUI
-import UniformTypeIdentifiers
-import WebKit
+import Security
 
 struct WorkshopItem: Identifiable, Hashable, Codable {
     let id: String
@@ -47,12 +44,13 @@ struct SteamOpenIDValidator {
         guard value.count == 17, value.allSatisfy(\.isNumber) else { return false }
         return value.hasPrefix("7656119")
     }
-    static func steamID(from url: URL) -> String? {
+    static func steamID(from url: URL, expectedState: String) -> String? {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
         let values = Dictionary(uniqueKeysWithValues: components.queryItems?.compactMap { item in
             item.value.map { (item.name, $0) }
         } ?? [])
         guard values["openid.op_endpoint"] == "https://steamcommunity.com/openid/login" else { return nil }
+        guard values["state"] == expectedState else { return nil }
         guard values["openid.mode"] == "id_res" else { return nil }
         let claimed = values["openid.claimed_id"] ?? ""
         guard let id = claimed.split(separator: "/").last.map(String.init), isValidSteamID(id) else { return nil }
@@ -86,6 +84,7 @@ final class SteamSession: NSObject, ObservableObject {
     @Published var isSigningIn = false
     private let keychain = KeychainStore()
     private var session: ASWebAuthenticationSession?
+    private var expectedState: String?
 
     override init() {
         super.init()
@@ -96,6 +95,7 @@ final class SteamSession: NSObject, ObservableObject {
         guard !isSigningIn else { return }
         isSigningIn = true
         let state = UUID().uuidString
+        expectedState = state
         var components = URLComponents(string:"https://steamcommunity.com/openid/login")!
         components.queryItems = [
             URLQueryItem(name:"openid.ns",value:"http://specs.openid.net/auth/2.0"),
@@ -110,15 +110,35 @@ final class SteamSession: NSObject, ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 defer { self.isSigningIn=false }
-                guard error == nil, let callback, let id=SteamOpenIDValidator.steamID(from:callback) else { return }
-                self.steamID=id
-                self.keychain.save(id)
+                guard error == nil, let callback, let expected=self.expectedState,
+                      let id=SteamOpenIDValidator.steamID(from:callback, expectedState:expected) else { return }
+                do {
+                    let valid=try await self.validateOpenID(callback)
+                    guard valid else { return }
+                    self.steamID=id
+                    self.keychain.save(id)
+                } catch { return }
             }
         }
         auth.presentationContextProvider = self
         auth.prefersEphemeralWebBrowserSession = false
         session = auth
         auth.start()
+    }
+
+    private func validateOpenID(_ callback: URL) async throws -> Bool {
+        guard var components=URLComponents(url:callback,resolvingAgainstBaseURL:false) else { return false }
+        var params=components.queryItems ?? []
+        params.removeAll { $0.name == "openid.mode" }
+        params.append(URLQueryItem(name:"openid.mode",value:"check_authentication"))
+        components.queryItems=params
+        var request=URLRequest(url:URL(string:"https://steamcommunity.com/openid/login")!)
+        request.httpMethod="POST"
+        request.setValue("application/x-www-form-urlencoded",forHTTPHeaderField:"Content-Type")
+        request.httpBody=components.percentEncodedQuery?.data(using:.utf8)
+        let (data,response)=try await URLSession.shared.data(for:request)
+        guard let http=response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return false }
+        return String(decoding:data,as:UTF8.self).range(of:#"(?im)^is_valid\s*:\s*true"#,options:.regularExpression) != nil
     }
 
     func signOut() {
@@ -129,7 +149,7 @@ final class SteamSession: NSObject, ObservableObject {
 
 extension SteamSession: ASWebAuthenticationPresentationContextProviding {
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first ?? ASPresentationAnchor()
+        UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap { $0.windows }.first(where: { $0.isKeyWindow }) ?? ASPresentationAnchor()
     }
 }
 
