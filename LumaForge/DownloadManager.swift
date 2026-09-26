@@ -10,7 +10,7 @@ final class DownloadManager: ObservableObject {
 
     // This is the API gateway URL, not a file host. The gateway queues work on
     // the SteamCMD/FFmpeg worker and returns only the finished MP4.
-    private static let serverURL = URL(string: "https://yxyfdxjyxcpitrrllopi.supabase.co/functions/v1/lumaforge-workshop-resolver")!
+    private static let serverURL = URL(string: "https://lumaforge-worker.onrender.com")!
 
     func download(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
