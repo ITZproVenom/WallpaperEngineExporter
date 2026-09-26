@@ -34,3 +34,6 @@ The CI pipeline validates the Python worker and builds the Docker image in addit
 
 
 <!-- CI verification: server-side Workshop acquisition cascade -->
+
+
+<!-- CI verification: queued job responses may omit optional result fields. -->
