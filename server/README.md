@@ -11,7 +11,7 @@ The iPhone never downloads a Workshop package, extracts PKG/ZIP contents, decode
 
 ## Pipeline
 
-`iPhone -> /v1/jobs -> GGNetwork -> Workshop archive -> package extraction -> FFmpeg -> MP4 -> /v1/files -> iPhone`
+`iPhone -> /v1/jobs -> acquisition cascade -> Workshop content -> media extraction -> FFmpeg -> MP4 -> /v1/files -> iPhone`
 
 Wallpaper Engine App ID: `431960`.
 
@@ -33,7 +33,9 @@ Jobs are temporary. Generated files are automatically removed after `WORK_MAX_AG
 - `WORK_ROOT=/tmp/lumaforge`
 - `WORK_MAX_AGE=3600`
 - `MAX_JOBS=1`
-- `WORKSHOP_PROVIDER=ggnetwork,steamcmd`
+- `MAX_MEMORY_JOBS=100`
+- `WORKSHOP_PROVIDER=supabase,swdl,ggnetwork,steamcmd`
+- `SUPABASE_RESOLVER_URL=https://yxyfdxjyxcpitrrllopi.supabase.co/functions/v1/lumaforge-workshop-resolver`
 - `GGNETWORK_ENDPOINT=https://api.ggntw.com/steam.request`
 - `MAX_DOWNLOAD_BYTES=2147483648`
 - `MAX_ZIP_ENTRIES=100000`
@@ -50,3 +52,14 @@ docker run --rm -p 8080:8080 \
 ```
 
 The image includes SteamCMD, FFmpeg, Python and Pillow. The primary Workshop acquisition path is the server-side GGNetwork API, so the iPhone and the Wallpaper Engine app are not required. SteamCMD is retained as a server-side fallback. Keep the service behind HTTPS.
+
+
+## Conversion behavior
+
+Native video wallpapers and standalone GIF/image media are converted directly with FFmpeg. A native
+Wallpaper Engine `scene.pkg` is **not** replaced by `preview.jpg` when the server cannot render its
+scene assets. In that case the job fails with an explicit unsupported-scene error instead of producing
+a misleading three-second preview video.
+
+Full scene rendering requires a Wallpaper Engine runtime/assets renderer. The worker does not bundle
+the proprietary Wallpaper Engine runtime assets.
