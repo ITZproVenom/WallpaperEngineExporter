@@ -97,7 +97,7 @@ enum DownloadError: LocalizedError {
         case .noDirectFile:
             return "Steam did not expose a public file URL for this Workshop item."
         case .resolverHTTP(let code):
-            return "Workshop resolver returned HTTP (code)."
+            return "Workshop resolver returned HTTP \(code)."
         case .resolverFailed:
             return "The Workshop download resolver returned no download URL."
         }
