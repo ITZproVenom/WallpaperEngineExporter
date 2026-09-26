@@ -5,6 +5,7 @@ import UIKit
 
 struct SteamOpenID {
     static let endpoint = "https://steamcommunity.com/openid/login"
+    static let callbackBase = "https://lumaforge-worker.onrender.com/v1/auth/steam/callback"
 
     static func steamID(from callback: URL, expectedState: String) -> String? {
         guard let components = URLComponents(url: callback, resolvingAgainstBaseURL: false) else { return nil }
@@ -79,12 +80,20 @@ final class SteamSession: NSObject, ObservableObject, ASWebAuthenticationPresent
         signingIn = true
         state = UUID().uuidString
 
-        var components = URLComponents(string: SteamOpenID.endpoint)!
+        guard let callback = URLComponents(string: SteamOpenID.callbackBase),
+              let endpoint = URLComponents(string: SteamOpenID.endpoint) else {
+            signingIn = false
+            return
+        }
+
+        var components = endpoint
         components.queryItems = [
             .init(name: "openid.ns", value: "http://specs.openid.net/auth/2.0"),
             .init(name: "openid.mode", value: "checkid_setup"),
-            .init(name: "openid.return_to", value: "https://fswswvhpszebuxnloysy.supabase.co/functions/v1/lumaforge-steam-callback?state=\(state)"),
-            .init(name: "openid.realm", value: "https://fswswvhpszebuxnloysy.supabase.co/"),
+            .init(name: "openid.return_to", value: callback.url!.appending(queryItems: [
+                URLQueryItem(name: "state", value: state)
+            ]).absoluteString),
+            .init(name: "openid.realm", value: callback.url!.deletingLastPathComponent().deletingLastPathComponent().absoluteString + "/"),
             .init(name: "openid.identity", value: "http://specs.openid.net/auth/2.0/identifier_select"),
             .init(name: "openid.claimed_id", value: "http://specs.openid.net/auth/2.0/identifier_select")
         ]
