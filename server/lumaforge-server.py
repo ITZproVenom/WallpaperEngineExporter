@@ -27,6 +27,8 @@ MAX_JOBS = int(os.getenv("MAX_JOBS", "1"))
 WORKSHOP_PROVIDER = os.getenv("WORKSHOP_PROVIDER", "ggnetwork,steamcmd").strip().lower()
 GGNETWORK_ENDPOINT = os.getenv("GGNETWORK_ENDPOINT", "https://api.ggntw.com/steam.request")
 MAX_DOWNLOAD_BYTES = int(os.getenv("MAX_DOWNLOAD_BYTES", str(2 * 1024 * 1024 * 1024)))
+MAX_ZIP_ENTRIES = int(os.getenv("MAX_ZIP_ENTRIES", "100000"))
+MAX_EXTRACTED_BYTES = int(os.getenv("MAX_EXTRACTED_BYTES", str(4 * 1024 * 1024 * 1024)))
 ID_RE = re.compile(r"^\d{6,20}$")
 jobs = {}
 jobs_lock = threading.Lock()
@@ -36,7 +38,9 @@ ROOT.mkdir(parents=True, exist_ok=True)
 
 def set_job(job_id, **values):
     with jobs_lock:
-        jobs[job_id].update(values)
+        job = jobs.get(job_id)
+        if job is not None:
+            job.update(values)
 
 
 def cleanup():
@@ -367,10 +371,20 @@ def extract_pkg(pkg, out_dir):
 
 def safe_extract_zip(archive, target):
     root = target.resolve()
-    for info in archive.infolist():
+    infos = archive.infolist()
+    if len(infos) > MAX_ZIP_ENTRIES:
+        raise RuntimeError("Workshop ZIP contains too many entries")
+    total_size = 0
+    for info in infos:
+        if info.file_size < 0:
+            raise RuntimeError("Workshop ZIP contains an invalid entry")
+        total_size += info.file_size
+        if total_size > MAX_EXTRACTED_BYTES:
+            raise RuntimeError("Workshop ZIP expands beyond the server extraction limit")
         destination = (target / info.filename).resolve()
         if destination != root and root not in destination.parents:
             raise RuntimeError("Unsafe ZIP entry")
+    for info in infos:
         archive.extract(info, target)
 
 
@@ -450,6 +464,8 @@ def process_job(job_id, workshop_id):
                 ffmpeg_gif_to_mp4(source, output)
             else:
                 ffmpeg_image_to_mp4(source, output)
+            if not output.is_file() or output.stat().st_size < 1024:
+                raise RuntimeError("FFmpeg produced an invalid MP4")
             set_job(job_id, status="completed", progress=100,
                     filename=output.name,
                     download_url=f"{PUBLIC_BASE_URL}/v1/files/{output.name}" if PUBLIC_BASE_URL else None)
@@ -562,6 +578,8 @@ class Handler(BaseHTTPRequestHandler):
             job = jobs.pop(job_id, None)
         if not job:
             return self.json(404, {"error": "Job not found"})
+        if job.get("status") in {"queued", "downloading", "converting"}:
+            return self.json(409, {"error": "Job is still running"})
         filename = job.get("filename")
         if filename:
             try:
