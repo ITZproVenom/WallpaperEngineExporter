@@ -76,6 +76,7 @@ def _download_url_to_file(url, destination, timeout=900):
     if not host or host in {"localhost", "127.0.0.1", "::1"} or host.endswith(".local"):
         raise RuntimeError("Downloader returned an unsafe URL")
 
+    destination.parent.mkdir(parents=True, exist_ok=True)
     request = urllib.request.Request(url, headers={
         "User-Agent": "LumaForge/3.0",
         "Accept": "*/*",
