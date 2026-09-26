@@ -103,6 +103,15 @@ def _validate_download_url(url):
     return parsed
 
 
+class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_download_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+SAFE_OPENER = urllib.request.build_opener(SafeRedirectHandler)
+
+
 def _download_url_to_file(url, destination, timeout=900):
     _validate_download_url(url)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -111,7 +120,7 @@ def _download_url_to_file(url, destination, timeout=900):
         "Accept": "*/*",
     })
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with SAFE_OPENER.open(request, timeout=timeout) as response:
             _validate_download_url(response.geturl())
             length = response.headers.get("Content-Length")
             if length and int(length) > MAX_DOWNLOAD_BYTES:
