@@ -42,22 +42,12 @@ final class DownloadManager: ObservableObject {
         defer { downloading = false }
 
         do {
-            if let url = try await SteamWorkshopAPI.steamWorkshopDownloaderURL(for: id) {
-                await downloadURL(url, alreadyMarked: true)
-                if downloadedURL != nil { return }
-            }
+            let resolved = try await SteamWorkshopAPI.resolvedDownloadURL(for: id)
+            await downloadURL(resolved, alreadyMarked: true)
 
-            if let resolved = try? await SteamWorkshopAPI.resolvedDownloadURL(for: id) {
-                await downloadURL(resolved, alreadyMarked: true)
-                if downloadedURL != nil { return }
+            if downloadedURL == nil {
+                throw DownloadError.noValidWorkshopFile
             }
-
-            if let url = try await SteamWorkshopAPI.fileURL(for: id) {
-                await downloadURL(url, alreadyMarked: true)
-                if downloadedURL != nil { return }
-            }
-
-            throw DownloadError.noValidWorkshopFile
         } catch {
             self.error = error.localizedDescription
         }
@@ -343,137 +333,6 @@ enum SteamWorkshopAPI {
 
     struct Envelope: Decodable {
         let response: Response
-    }
-
-    static func fileURL(for id: String) async throws -> URL? {
-        var request = URLRequest(
-            url: URL(string: "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/")!
-        )
-        request.httpMethod = "POST"
-        request.setValue(
-            "application/x-www-form-urlencoded; charset=utf-8",
-            forHTTPHeaderField: "Content-Type"
-        )
-        request.httpBody = "itemcount=1&publishedfileids%5B0%5D=\(id)".data(using: .utf8)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse,
-              (200..<300).contains(http.statusCode) else {
-            throw DownloadError.httpStatus((response as? HTTPURLResponse)?.statusCode ?? -1)
-        }
-
-        let envelope = try JSONDecoder().decode(Envelope.self, from: data)
-        guard let details = envelope.response.publishedfiledetails.first,
-              details.result == 1 else {
-            return nil
-        }
-        guard let value = details.file_url, !value.isEmpty else {
-            return nil
-        }
-        return URL(string: value)
-    }
-
-    static func steamWorkshopDownloaderURL(for id: String) async throws -> URL? {
-        let hosts = [
-            "https://backend-03-prd.steamworkshopdownloader.io",
-            "https://backend-02-prd.steamworkshopdownloader.io",
-            "https://backend-01-prd.steamworkshopdownloader.io"
-        ]
-
-        for host in hosts {
-            do {
-                var request = URLRequest(url: URL(string: host + "/api/download/request")!)
-                request.httpMethod = "POST"
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.setValue("application/json", forHTTPHeaderField: "Accept")
-                request.setValue("LumaForge/1.0", forHTTPHeaderField: "User-Agent")
-                request.httpBody = try JSONSerialization.data(withJSONObject: [
-                    "publishedFileId": Int(id) ?? 0,
-                    "collectionId": NSNull(),
-                    "extract": true,
-                    "hidden": true,
-                    "direct": false,
-                    "autodownload": true
-                ])
-
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let http = response as? HTTPURLResponse,
-                      (200..<300).contains(http.statusCode) else {
-                    continue
-                }
-
-                guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let uuid = object["uuid"] as? String,
-                      !uuid.isEmpty else {
-                    continue
-                }
-
-                let statusURL = URL(string: host + "/api/download/status")!
-                let deadline = Date().addingTimeInterval(120)
-
-                while Date() < deadline {
-                    var statusRequest = URLRequest(url: statusURL)
-                    statusRequest.httpMethod = "POST"
-                    statusRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    statusRequest.setValue("application/json", forHTTPHeaderField: "Accept")
-                    statusRequest.setValue("LumaForge/1.0", forHTTPHeaderField: "User-Agent")
-                    statusRequest.httpBody = try JSONSerialization.data(withJSONObject: [
-                        "uuids": [uuid]
-                    ])
-
-                    let (statusData, statusResponse) = try await URLSession.shared.data(for: statusRequest)
-                    guard let statusHTTP = statusResponse as? HTTPURLResponse,
-                          (200..<300).contains(statusHTTP.statusCode) else {
-                        break
-                    }
-
-                    let statusObject = try? JSONSerialization.jsonObject(with: statusData)
-                    if Self.containsPreparedStatus(statusObject, uuid: uuid) {
-                        return URL(string: host + "/api/download/transmit?uuid=" + uuid)
-                    }
-
-                    try await Task.sleep(nanoseconds: 750_000_000)
-                }
-            } catch {
-                continue
-            }
-        }
-
-        return nil
-    }
-
-    private static func containsPreparedStatus(_ value: Any?, uuid: String) -> Bool {
-        if let string = value as? String {
-            return string.lowercased() == "prepared"
-        }
-
-        if let dictionary = value as? [String: Any] {
-            if let status = dictionary["status"] as? String,
-               status.lowercased() == "prepared" {
-                return true
-            }
-
-            if let entry = dictionary[uuid],
-               containsPreparedStatus(entry, uuid: uuid) {
-                return true
-            }
-
-            for child in dictionary.values {
-                if containsPreparedStatus(child, uuid: uuid) {
-                    return true
-                }
-            }
-        }
-
-        if let array = value as? [Any] {
-            for child in array {
-                if containsPreparedStatus(child, uuid: uuid) {
-                    return true
-                }
-            }
-        }
-
-        return false
     }
 
     static func resolvedDownloadURL(for id: String) async throws -> URL {
