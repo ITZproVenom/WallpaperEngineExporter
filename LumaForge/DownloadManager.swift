@@ -25,12 +25,12 @@ final class DownloadManager: ObservableObject {
 
         do {
             if let url = try await SteamWorkshopAPI.fileURL(for: id) {
-                try await downloadURL(url, alreadyMarked: true)
+                await downloadURL(url, alreadyMarked: true)
                 if downloadedURL != nil { return }
             }
 
             let resolved = try await SteamWorkshopAPI.resolvedDownloadURL(for: id)
-            try await downloadURL(resolved, alreadyMarked: true)
+            await downloadURL(resolved, alreadyMarked: true)
         } catch {
             self.error = error.localizedDescription
         }
@@ -173,7 +173,7 @@ final class DownloadManager: ObservableObject {
             let range = NSRange(html.startIndex..<html.endIndex, in: html)
             for match in regex.matches(in: html, range: range) {
                 guard let valueRange = Range(match.range, in: html) else { continue }
-                let raw = String(html[valueRange]).trimmingCharacters(in: ".,);")
+                let raw = String(html[valueRange]).trimmingCharacters(in: CharacterSet(charactersIn: ".,);"))
                 let lower = raw.lowercased()
                 let score = lower.contains("download") || lower.contains("direct") ||
                     lower.contains("transmit") || lower.contains("cdn") || lower.contains("file") ? 60 : 5
