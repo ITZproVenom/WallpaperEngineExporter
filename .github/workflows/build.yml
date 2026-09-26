@@ -19,9 +19,16 @@ jobs:
       - name: Build archive
         run: |
           xcodebuild -project LumaForge.xcodeproj -scheme LumaForge -sdk iphoneos -configuration Release -archivePath build/LumaForge.xcarchive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO archive
+      - name: Install iOS Simulator runtime
+        run: |
+          xcodebuild -downloadPlatform iOS -buildVersion 26.0
+          xcrun simctl list runtimes
       - name: Run unit tests
         run: |
-          xcodebuild test -project LumaForge.xcodeproj -scheme LumaForge -sdk iphonesimulator -destination 'platform=iOS Simulator,OS=latest,name=iPhone 17' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+          set -euo pipefail
+          DEVICE_ID="$(xcrun simctl list devices available | awk -F '[()]' '/iPhone .* \(26\.0\)/ {print $2; exit}')"
+          test -n "$DEVICE_ID"
+          xcodebuild test -project LumaForge.xcodeproj -scheme LumaForge -sdk iphonesimulator -destination "platform=iOS Simulator,id=$DEVICE_ID" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
 
       - name: Package unsigned IPA
         run: |
@@ -86,13 +93,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for _ in $(seq 1 30); do
-            if curl -fsS --max-time 15 https://lumaforge-worker.onrender.com/health | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["ok"] is True'; then
+          EXPECTED_SHA="${GITHUB_SHA}"
+          for _ in $(seq 1 60); do
+            HEALTH="$(curl -fsS --max-time 15 https://lumaforge-worker.onrender.com/health || true)"
+            if python3 -c 'import json,sys; x=json.loads(sys.argv[1]); assert x["ok"] is True; assert x.get("git_commit")==sys.argv[2]' "$HEALTH" "$EXPECTED_SHA"; then
               exit 0
             fi
             sleep 10
           done
-          echo "Production worker did not become healthy"
+          echo "Production worker did not deploy commit $EXPECTED_SHA"
           exit 1
       - name: Run real Workshop conversion
         shell: bash
@@ -103,7 +112,7 @@ jobs:
             -d '{"workshop_id":"3797216571"}')"
           JOB_ID="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["job_id"])' <<<"$CREATE")"
           test -n "$JOB_ID"
-          for _ in $(seq 1 900); do
+          for _ in $(seq 1 540); do
             BODY="$(curl -fsS --max-time 30 "https://lumaforge-worker.onrender.com/v1/jobs/$JOB_ID")"
             STATUS="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["status"])' <<<"$BODY")"
             case "$STATUS" in
