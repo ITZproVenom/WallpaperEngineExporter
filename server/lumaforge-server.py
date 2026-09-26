@@ -9,9 +9,10 @@ import threading
 import time
 import uuid
 import zipfile
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
 APP_ID = "431960"
 HOST = os.getenv("HOST", "0.0.0.0")
@@ -55,7 +56,64 @@ def run(cmd, timeout=600):
     return result.stdout
 
 
+def resolver_download(workshop_id, target):
+    api = os.getenv("WORKSHOP_RESOLVER_API", "https://api_01.steamworkshopdownloader.io/api").rstrip("/")
+    request_body = json.dumps({
+        "publishedFileId": int(workshop_id),
+        "collectionId": None,
+        "extract": True,
+        "hidden": False,
+        "direct": False,
+        "autodownload": False
+    }).encode()
+    req = urllib.request.Request(
+        api + "/download/request",
+        data=request_body,
+        headers={"Content-Type": "application/json"},
+        method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=30) as response:
+        created = json.loads(response.read().decode())
+    token = created.get("uuid")
+    if not token:
+        raise RuntimeError("Workshop resolver returned no job ID")
+
+    deadline = time.time() + 600
+    while time.time() < deadline:
+        status_req = urllib.request.Request(
+            api + "/download/status",
+            data=json.dumps({"uuids": [token]}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(status_req, timeout=30) as response:
+            status = json.loads(response.read().decode())
+        item = status.get(token, status if "progress" in status else {})
+        progress_text = str(item.get("progressText", "")).lower()
+        if "failed" in progress_text or str(item.get("status", "")).lower() == "error":
+            raise RuntimeError("Workshop resolver download failed")
+        try:
+            progress = float(item.get("progress", 0))
+        except (TypeError, ValueError):
+            progress = 0
+        if progress >= 100:
+            archive_path = target.parent / (workshop_id + "-resolver.zip")
+            urllib.request.urlretrieve(
+                api + "/download/transmit?uuid=" + quote(token),
+                archive_path
+            )
+            target.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(archive_path) as archive:
+                safe_extract_zip(archive, target)
+            archive_path.unlink(missing_ok=True)
+            return target
+        time.sleep(2)
+
+    raise RuntimeError("Workshop resolver timed out")
+
+
 def steamcmd_download(workshop_id, target):
+    steam_error = None
     output = run([
         STEAMCMD, "+@ShutdownOnFailedCommand", "1",
         "+@NoPromptForPassword", "1",
@@ -64,19 +122,17 @@ def steamcmd_download(workshop_id, target):
         "+workshop_download_item", APP_ID, workshop_id, "validate", "+quit"
     ], timeout=600)
     content = target / "steamapps" / "workshop" / "content" / APP_ID / workshop_id
-    if not content.is_dir():
-        logs = []
-        for log_name in ("stderr.txt", "stdout.txt"):
-            log_path = Path.home() / "Steam" / "logs" / log_name
-            try:
-                log_text = log_path.read_text(errors="replace")
-                logs.append("--- " + log_name + " ---\n" + log_text[-4000:])
-            except OSError:
-                pass
-        detail = "\n".join(logs)
-        print(f"[lumaforge] SteamCMD produced no Workshop content for {workshop_id}: {detail or output[-4000:]}", flush=True)
-        raise RuntimeError("SteamCMD returned no Workshop content")
-    return content
+    if content.is_dir():
+        return content
+
+    steam_error = "SteamCMD returned no Workshop content"
+    print(f"[lumaforge] SteamCMD could not fetch {workshop_id}; trying public resolver", flush=True)
+    try:
+        resolver_root = target.parent / "resolver"
+        return resolver_download(workshop_id, resolver_root)
+    except Exception as resolver_exc:
+        print(f"[lumaforge] public resolver failed for {workshop_id}: {resolver_exc}", flush=True)
+        raise RuntimeError(f"{steam_error}; public resolver failed: {resolver_exc}")
 def ffmpeg_image_to_mp4(image, output):
     run([
         "ffmpeg", "-y", "-loop", "1", "-i", str(image),
