@@ -76,9 +76,57 @@ jobs:
         run: |
           ! grep -R "AVFoundation\|AVAssetExportSession\|PackageInspector" LumaForge --include='*.swift'
 
+  live-smoke:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [server-check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Wait for production worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 30); do
+            if curl -fsS --max-time 15 https://lumaforge-worker.onrender.com/health | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["ok"] is True'; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Production worker did not become healthy"
+          exit 1
+      - name: Run real Workshop conversion
+        shell: bash
+        run: |
+          set -euo pipefail
+          CREATE="$(curl -fsS --max-time 30 -X POST https://lumaforge-worker.onrender.com/v1/jobs \
+            -H 'Content-Type: application/json' \
+            -d '{"workshop_id":"3797216571"}')"
+          JOB_ID="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["job_id"])' <<<"$CREATE")"
+          test -n "$JOB_ID"
+          for _ in $(seq 1 900); do
+            BODY="$(curl -fsS --max-time 30 "https://lumaforge-worker.onrender.com/v1/jobs/$JOB_ID")"
+            STATUS="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["status"])' <<<"$BODY")"
+            case "$STATUS" in
+              completed)
+                FILENAME="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["filename"])' <<<"$BODY")"
+                curl -fsS --max-time 120 -o "$RUNNER_TEMP/lumaforge-smoke.mp4" "https://lumaforge-worker.onrender.com/v1/files/$FILENAME"
+                test -s "$RUNNER_TEMP/lumaforge-smoke.mp4"
+                file "$RUNNER_TEMP/lumaforge-smoke.mp4"
+                exit 0
+                ;;
+              failed)
+                echo "$BODY"
+                exit 1
+                ;;
+            esac
+            sleep 2
+          done
+          echo "Production Workshop conversion timed out"
+          exit 1
+
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [build, server-check]
+    needs: [build, server-check, live-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Download IPA artifact
