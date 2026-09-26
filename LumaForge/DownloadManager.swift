@@ -406,40 +406,6 @@ enum SteamWorkshopAPI {
         }
 
         return nil
-
-        func findURL(_ value: Any) -> URL? {
-            if let string = value as? String,
-               let url = URL(string: string),
-               let scheme = url.scheme?.lowercased(),
-               scheme == "http" || scheme == "https" {
-                return url
-            }
-
-            if let dictionary = value as? [String: Any] {
-                for key in ["download_url", "downloadUrl", "url", "link", "file", "download", "href"] {
-                    if let child = dictionary[key], let url = findURL(child) {
-                        return url
-                    }
-                }
-                for child in dictionary.values {
-                    if let url = findURL(child) {
-                        return url
-                    }
-                }
-            }
-
-            if let array = value as? [Any] {
-                for child in array {
-                    if let url = findURL(child) {
-                        return url
-                    }
-                }
-            }
-
-            return nil
-        }
-
-        return findURL(object)
     }
 
     static func resolvedDownloadURL(for id: String) async throws -> URL {
