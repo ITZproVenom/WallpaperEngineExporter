@@ -6,7 +6,7 @@ final class DownloadManager: ObservableObject {
     @Published private(set) var downloadedURL: URL?
     @Published var error: String?
 
-    private static let serverURL = URL(string: "https://fswswvhpszebuxnloysy.supabase.co/functions/v1/lumaforge-workshop-resolver")!
+    private static let serverURL = URL(string: "https://yxyfdxjyxcpitrrllopi.supabase.co/functions/v1/lumaforge-workshop-resolver")!
 
     func download(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
