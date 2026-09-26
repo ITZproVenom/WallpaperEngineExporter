@@ -83,8 +83,8 @@ final class SteamSession: NSObject, ObservableObject, ASWebAuthenticationPresent
         components.queryItems = [
             .init(name: "openid.ns", value: "http://specs.openid.net/auth/2.0"),
             .init(name: "openid.mode", value: "checkid_setup"),
-            .init(name: "openid.return_to", value: "lumaforge://steam-callback?state=\(state)"),
-            .init(name: "openid.realm", value: "lumaforge://"),
+            .init(name: "openid.return_to", value: "https://lumaforge.local/steam-callback?state=\(state)"),
+            .init(name: "openid.realm", value: "https://lumaforge.local/"),
             .init(name: "openid.identity", value: "http://specs.openid.net/auth/2.0/identifier_select"),
             .init(name: "openid.claimed_id", value: "http://specs.openid.net/auth/2.0/identifier_select")
         ]
@@ -94,7 +94,7 @@ final class SteamSession: NSObject, ObservableObject, ASWebAuthenticationPresent
             return
         }
 
-        let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "lumaforge") { [weak self] callback, error in
+        let session = ASWebAuthenticationSession(url: url, callback: .https(host: "lumaforge.local", path: "/steam-callback")) { [weak self] callback, error in
             Task { @MainActor in
                 guard let self else { return }
                 defer { self.signingIn = false }
