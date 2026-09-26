@@ -20,13 +20,20 @@ struct LumaForgeApp: App {
             }
             .tint(.indigo)
             .task { await workshop.search() }
-            .alert("LumaForge", isPresented: Binding(
-                get: { workshop.error != nil || exports.error != nil },
-                set: { if !$0 { workshop.error = nil; exports.error = nil } }
-            )) {
-                Button("OK") { workshop.error = nil; exports.error = nil }
-            } message: {
-                Text(workshop.error ?? exports.error ?? "")
+            .overlay(alignment: .top) {
+                if let error = workshop.error ?? exports.error {
+                    Text(error)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(.regularMaterial, in: Capsule())
+                        .padding(.top, 8)
+                        .onTapGesture {
+                            workshop.error = nil
+                            exports.error = nil
+                        }
+                }
             }
         }
     }
