@@ -114,7 +114,7 @@ final class SteamWorkshopService: ObservableObject {
             return
         }
 
-        searchResults = await fetchItems(ids: ids.prefix(30).map(String.init)).map(mergeWithExisting)
+        searchResults = await fetchItems(ids: Array(ids.prefix(30))).map(mergeWithExisting)
         if searchResults.isEmpty {
             lastError = "No Workshop metadata could be loaded for those results."
         }
