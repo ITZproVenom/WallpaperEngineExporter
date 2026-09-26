@@ -69,15 +69,14 @@ def steamcmd_download(workshop_id, target):
         for log_name in ("stderr.txt", "stdout.txt"):
             log_path = Path.home() / "Steam" / "logs" / log_name
             try:
-                logs.append(f"--- {log_name} ---\\n{log_path.read_text(errors=\"replace\")[-4000:]}")
+                log_text = log_path.read_text(errors="replace")
+                logs.append("--- " + log_name + " ---\n" + log_text[-4000:])
             except OSError:
                 pass
-        detail = "\\n".join(logs)
+        detail = "\n".join(logs)
         print(f"[lumaforge] SteamCMD produced no Workshop content for {workshop_id}: {detail or output[-4000:]}", flush=True)
         raise RuntimeError("SteamCMD returned no Workshop content")
     return content
-
-
 def ffmpeg_image_to_mp4(image, output):
     run([
         "ffmpeg", "-y", "-loop", "1", "-i", str(image),
