@@ -39,6 +39,7 @@ struct WorkshopView: View {
     @StateObject private var downloader = DownloadManager()
     @State private var directLink = ""
     @State private var downloadingID: String?
+    @State private var showSubscriptions = false
 
     var body: some View {
         NavigationStack {
@@ -55,7 +56,7 @@ struct WorkshopView: View {
                             Button("Sign in") { steam.signIn() }
                                 .buttonStyle(.borderedProminent)
                         } else {
-                            Button("My Subscribed") { Task { await store.subscribed(steamID: steam.steamID!) } }
+                            Button("My Subscribed") { showSubscriptions = true }
                                 .buttonStyle(.borderedProminent)
                         }
                     }
@@ -132,6 +133,29 @@ struct WorkshopView: View {
                 .padding()
             }
             .navigationTitle("Workshop")
+            .sheet(isPresented: $showSubscriptions) {
+                NavigationStack {
+                    SteamSubscriptionsView(steamID: steam.steamID ?? "") { subscribed in
+                        store.setSubscribed(subscribed)
+                        showSubscriptions = false
+                    }
+                    .navigationTitle("Steam Subscriptions")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { showSubscriptions = false }
+                        }
+                    }
+                    .safeAreaInset(edge: .bottom) {
+                        Text("If Steam shows its login page, sign in there. Your Steam password is handled by Steam's web page, not LumaForge.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal)
+                            .padding(.vertical, 8)
+                            .background(.ultraThinMaterial)
+                    }
+                }
+            }
         }
     }
 
