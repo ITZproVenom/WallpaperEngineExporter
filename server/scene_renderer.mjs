@@ -182,6 +182,7 @@ try {
       "--ignore-gpu-blocklist",
       "--use-gl=angle",
       "--use-angle=swiftshader",
+      "--enable-unsafe-swiftshader",
       "--autoplay-policy=no-user-gesture-required",
       "--disable-background-timer-throttling",
       "--disable-backgrounding-occluded-windows",
