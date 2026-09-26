@@ -63,7 +63,7 @@ final class DownloadManager: ObservableObject {
         }
     }
 
-    private func createJob(workshopID: String) async throws -> JobResponse {
+    private func createJob(workshopID: String) async throws -> CreateJobResponse {
         let url = Self.serverURL.appendingPathComponent("v1/jobs")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -75,7 +75,7 @@ final class DownloadManager: ObservableObject {
         let (data, response) = try await URLSession.shared.data(for: request)
         try validate(response, data: data)
 
-        let job = try JSONDecoder().decode(JobResponse.self, from: data)
+        let job = try JSONDecoder().decode(CreateJobResponse.self, from: data)
         guard !job.jobID.isEmpty else {
             throw DownloadError.serverMessage("The server did not return a job ID.")
         }
@@ -175,6 +175,16 @@ private struct CreateJobRequest: Encodable {
 
     init(workshopID: String) {
         self.workshop_id = workshopID
+    }
+}
+
+private struct CreateJobResponse: Decodable {
+    let jobID: String
+    let status: String
+
+    enum CodingKeys: String, CodingKey {
+        case jobID = "job_id"
+        case status
     }
 }
 
