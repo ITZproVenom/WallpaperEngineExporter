@@ -9,6 +9,8 @@ import threading
 import time
 import uuid
 import zipfile
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -22,6 +24,9 @@ STEAMCMD = os.getenv("STEAMCMD", "/opt/steamcmd/steamcmd.sh")
 ROOT = Path(os.getenv("WORK_ROOT", "/tmp/lumaforge"))
 MAX_AGE = int(os.getenv("WORK_MAX_AGE", "3600"))
 MAX_JOBS = int(os.getenv("MAX_JOBS", "1"))
+WORKSHOP_PROVIDER = os.getenv("WORKSHOP_PROVIDER", "ggnetwork,steamcmd").strip().lower()
+GGNETWORK_ENDPOINT = os.getenv("GGNETWORK_ENDPOINT", "https://api.ggntw.com/steam.request")
+MAX_DOWNLOAD_BYTES = int(os.getenv("MAX_DOWNLOAD_BYTES", str(2 * 1024 * 1024 * 1024)))
 ID_RE = re.compile(r"^\d{6,20}$")
 jobs = {}
 jobs_lock = threading.Lock()
@@ -55,6 +60,100 @@ def run(cmd, timeout=600):
     return result.stdout
 
 
+def _download_url_to_file(url, destination, timeout=900):
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise RuntimeError("Downloader returned a non-HTTPS URL")
+    host = (parsed.hostname or "").lower()
+    if not host or host in {"localhost", "127.0.0.1", "::1"} or host.endswith(".local"):
+        raise RuntimeError("Downloader returned an unsafe URL")
+
+    request = urllib.request.Request(url, headers={
+        "User-Agent": "LumaForge/3.0",
+        "Accept": "*/*",
+    })
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            length = response.headers.get("Content-Length")
+            if length and int(length) > MAX_DOWNLOAD_BYTES:
+                raise RuntimeError("Workshop download exceeds server size limit")
+            written = 0
+            with destination.open("wb") as output:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > MAX_DOWNLOAD_BYTES:
+                        raise RuntimeError("Workshop download exceeds server size limit")
+                    output.write(chunk)
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"Workshop provider returned HTTP {exc.code}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Workshop provider network error: {exc.reason}") from exc
+    return destination
+
+
+def _materialize_provider_file(downloaded, target):
+    content = target / "content"
+    content.mkdir(parents=True, exist_ok=True)
+
+    if zipfile.is_zipfile(downloaded):
+        safe_extract_zip(downloaded, content)
+        return content
+
+    suffix = Path(urlparse(downloaded.name).path).suffix.lower()
+    destination = content / ("workshop" + suffix if suffix else "workshop.pkg")
+    shutil.copy2(downloaded, destination)
+    return content
+
+
+def ggnetwork_download(workshop_id, target):
+    workshop_url = f"https://steamcommunity.com/sharedfiles/filedetails/?id={workshop_id}"
+    payload = json.dumps({"url": workshop_url}).encode()
+    request = urllib.request.Request(
+        GGNETWORK_ENDPOINT,
+        data=payload,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Origin": "https://ggntw.com",
+            "Referer": "https://ggntw.com/",
+            "User-Agent": "LumaForge/3.0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            if response.status != 200:
+                raise RuntimeError(f"GGNetwork returned HTTP {response.status}")
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"GGNetwork returned HTTP {exc.code}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"GGNetwork network error: {exc.reason}") from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("GGNetwork returned invalid JSON") from exc
+
+    download_url = None
+    for key in ("download_url", "url", "link", "file", "download"):
+        if isinstance(data, dict) and isinstance(data.get(key), str):
+            download_url = data[key]
+            break
+    if not download_url and isinstance(data, dict) and isinstance(data.get("data"), dict):
+        nested = data["data"]
+        for key in ("download_url", "url", "link", "file", "download"):
+            if isinstance(nested.get(key), str):
+                download_url = nested[key]
+                break
+    if not download_url:
+        raise RuntimeError("GGNetwork returned no download URL")
+
+    downloaded = target / "provider-download"
+    _download_url_to_file(download_url, downloaded)
+    return _materialize_provider_file(downloaded, target)
+
+
 def steamcmd_download(workshop_id, target):
     output = run([
         STEAMCMD, "+@ShutdownOnFailedCommand", "1",
@@ -67,6 +166,21 @@ def steamcmd_download(workshop_id, target):
     if content.is_dir():
         return content
     raise RuntimeError("SteamCMD returned no Workshop content")
+
+
+def acquire_workshop(workshop_id, target):
+    providers = [p.strip() for p in WORKSHOP_PROVIDER.split(",") if p.strip()]
+    errors = []
+    for provider in providers:
+        try:
+            if provider == "ggnetwork":
+                return ggnetwork_download(workshop_id, target)
+            if provider == "steamcmd":
+                return steamcmd_download(workshop_id, target)
+            errors.append(f"{provider}: unknown provider")
+        except Exception as exc:
+            errors.append(f"{provider}: {exc}")
+    raise RuntimeError("All Workshop acquisition providers failed: " + " | ".join(errors))
 def ffmpeg_image_to_mp4(image, output):
     run([
         "ffmpeg", "-y", "-loop", "1", "-i", str(image),
@@ -288,7 +402,7 @@ def process_job(job_id, workshop_id):
             work.mkdir(parents=True, exist_ok=True)
             scratch.mkdir(parents=True, exist_ok=True)
             set_job(job_id, status="downloading", progress=15)
-            content = steamcmd_download(workshop_id, download_dir)
+            content = acquire_workshop(workshop_id, download_dir)
             set_job(job_id, status="converting", progress=60)
             source = locate_source(content, scratch)
             if source.suffix.lower() in {".mp4", ".mov", ".m4v", ".webm"}:
