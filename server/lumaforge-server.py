@@ -213,7 +213,7 @@ def extract_pkg(pkg, out_dir):
 
     for name, offset, length in sorted(entries, key=lambda x: x[2], reverse=True):
         start, end = payload + offset, payload + offset + length
-        if start < payload or end > len(data) or end > len(data):
+        if start < payload or end > len(data) or end < start:
             continue
         blob = data[start:end]
         lower = name.lower()
@@ -233,6 +233,15 @@ def extract_pkg(pkg, out_dir):
             outputs.append(p)
             return outputs
     return outputs
+
+
+def safe_extract_zip(archive, target):
+    root = target.resolve()
+    for info in archive.infolist():
+        destination = (target / info.filename).resolve()
+        if destination != root and root not in destination.parents:
+            raise RuntimeError("Unsafe ZIP entry")
+        archive.extract(info, target)
 
 
 def locate_source(content, scratch):
@@ -261,7 +270,7 @@ def locate_source(content, scratch):
 
     pkgs = [p for p in files if p.suffix.lower() == ".pkg" or p.name.lower().endswith(".pkg")]
     for pkg in pkgs:
-        found = extract_pkg(pkg, scratch / "pkg")
+        pkg_dir = scratch / "pkg"\n        pkg_dir.mkdir(parents=True, exist_ok=True)\n        found = extract_pkg(pkg, pkg_dir)
         if found:
             return found[0]
 
