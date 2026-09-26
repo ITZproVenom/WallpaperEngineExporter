@@ -1,11 +1,20 @@
-name: LumaDeck CI
+name: LumaForge CI
+
 on:
   push:
-    branches: [main, clean-rebuild]
+    branches: [main]
   pull_request:
+    branches: [main]
+  workflow_dispatch:
+
 jobs:
   build:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - run: xcodebuild -project LumaDeck.xcodeproj -scheme LumaDeck -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.0.app
+      - name: Build
+        run: xcodebuild -project LumaForge.xcodeproj -scheme LumaForge -sdk iphonesimulator -configuration Release CODE_SIGNING_ALLOWED=NO build
+      - name: Test
+        run: xcodebuild -project LumaForge.xcodeproj -scheme LumaForge -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO test
