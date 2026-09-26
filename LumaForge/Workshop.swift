@@ -30,7 +30,7 @@ final class WorkshopStore: ObservableObject {
             items = parse(html)
             if items.isEmpty { throw WorkshopError.noItems }
         } catch {
-            error = error.localizedDescription
+            self.error = error.localizedDescription
         }
     }
 
