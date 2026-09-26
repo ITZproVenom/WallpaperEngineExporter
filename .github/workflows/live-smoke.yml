@@ -79,3 +79,5 @@ jobs:
             JOB_ID=$(python3 -c 'import json; print(json.load(open("job.json"))["job_id"])')
             curl -fsS --max-time 20 -X DELETE "https://lumaforge-worker.onrender.com/v1/jobs/$JOB_ID" || true
           fi
+
+# live worker verification
