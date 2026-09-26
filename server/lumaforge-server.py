@@ -462,7 +462,7 @@ class Handler(BaseHTTPRequestHandler):
         job_id = uuid.uuid4().hex
         with jobs_lock:
             jobs[job_id] = {
-                "id": job_id, "workshop_id": workshop_id,
+                "job_id": job_id, "id": job_id, "workshop_id": workshop_id,
                 "status": "queued", "progress": 0,
                 "created_at": int(time.time())
             }
