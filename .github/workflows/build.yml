@@ -81,7 +81,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [server-check]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Wait for production worker
         shell: bash
@@ -145,6 +145,38 @@ jobs:
             sleep 2
           done
           echo "Production Workshop conversion timed out"
+          exit 1
+
+      - name: Run real scene Workshop conversion
+        shell: bash
+        run: |
+          set -euo pipefail
+          CREATE="$(curl -fsS --max-time 30 -X POST https://lumaforge-worker.onrender.com/v1/jobs \
+            -H 'Content-Type: application/json' \
+            -d '{"workshop_id":"3714599577"}')"
+          JOB_ID="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["job_id"])' <<<"$CREATE")"
+          test -n "$JOB_ID"
+          for _ in $(seq 1 840); do
+            BODY="$(curl -fsS --max-time 30 "https://lumaforge-worker.onrender.com/v1/jobs/$JOB_ID")"
+            STATUS="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["status"])' <<<"$BODY")"
+            case "$STATUS" in
+              completed)
+                FILENAME="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["filename"])' <<<"$BODY")"
+                FILE_URL="https://lumaforge-worker.onrender.com/v1/files/$FILENAME"
+                curl -fsS --max-time 180 -o "$RUNNER_TEMP/lumaforge-scene-smoke.mp4" "$FILE_URL"
+                test -s "$RUNNER_TEMP/lumaforge-scene-smoke.mp4"
+                python3 -c 'from pathlib import Path; p=Path(__import__("sys").argv[1]); d=p.read_bytes(); assert len(d)>1024; assert d[4:8]==b"ftyp"; assert b"mp4" in d[:64]' "$RUNNER_TEMP/lumaforge-scene-smoke.mp4"
+                curl -fsS -X DELETE "https://lumaforge-worker.onrender.com/v1/jobs/$JOB_ID" >/dev/null || true
+                exit 0
+                ;;
+              failed)
+                echo "$BODY"
+                exit 1
+                ;;
+            esac
+            sleep 2
+          done
+          echo "Production scene Workshop conversion timed out"
           exit 1
 
   release:
