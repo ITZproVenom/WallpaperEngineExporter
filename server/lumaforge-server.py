@@ -504,7 +504,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         cleanup()
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        if path == "/v1/auth/steam/callback":
+            query = parsed.query
+            if not query:
+                return self.send_response(400) or None
+            location = "lumaforge://steam-callback?" + query
+            self.send_response(302)
+            self.send_header("Location", location)
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
 
         if path == "/health":
             return self.json(200, {"ok": True, "service": "lumaforge", "providers": WORKSHOP_PROVIDER, "converter": "ffmpeg"})
