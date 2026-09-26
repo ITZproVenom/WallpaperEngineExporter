@@ -1,6 +1,86 @@
 import Foundation
-@MainActor final class WorkshopStore:ObservableObject {
- @Published private(set) var items:[WorkshopItem]=[];@Published var query="";@Published private(set) var loading=false;@Published var error:String?;private let appID="431960"
- func search() async {loading=true;defer{loading=false};do{var c=URLComponents(string:"https://steamcommunity.com/workshop/browse/")!;c.queryItems=[.init(name:"appid",value:appID),.init(name:"section",value:"items")];if !query.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty{c.queryItems?.append(.init(name:"searchtext",value:query))};var r=URLRequest(url:c.url!);r.setValue("Mozilla/5.0",forHTTPHeaderField:"User-Agent");let(d,_)=try await URLSession.shared.data(for:r);items=parse(String(decoding:d,as:UTF8.self))} catch { self.error = error.localizedDescription }}
- private func parse(_ html:String)->[WorkshopItem]{guard let re=try? NSRegularExpression(pattern:#"<a[^>]+href="([^"]*sharedfiles/filedetails/\?id=(\d+)[^"]*)"[^>]*>(.*?)</a>"#,options:[.caseInsensitive,.dotMatchesLineSeparators]) else{return []};var out:[WorkshopItem]=[];var seen=Set<String>();for m in re.matches(in:html,range:NSRange(html.startIndex...,in:html)){guard let ir=Range(m.range(at:2),in:html),let hr=Range(m.range(at:1),in:html),let tr=Range(m.range(at:3),in:html) else{continue};let id=String(html[ir]);guard seen.insert(id).inserted else{continue};let raw=String(html[hr]).replacingOccurrences(of:"&amp;",with:"&");guard let page=URL(string:raw.hasPrefix("http") ? raw : "https://steamcommunity.com\(raw)") else{continue};let title=String(html[tr]).replacingOccurrences(of:"<[^>]+>",with:"",options:.regularExpression).trimmingCharacters(in:.whitespacesAndNewlines);let ns=html as NSString;let start=max(0,m.range.location-1500);let window=ns.substring(with:NSRange(location:start,length:min(ns.length-start,m.range.length+2800)));let p=try? NSRegularExpression(pattern:#"https?://[^"' ]+\.(?:jpg|jpeg|png|webp)"#,options:.caseInsensitive);let preview=p?.firstMatch(in:window,range:NSRange(window.startIndex...,in:window)).flatMap{Range($0.range,in:window)}.flatMap{URL(string:String(window[$0]).replacingOccurrences(of:"&amp;",with:"&"))};out.append(.init(id:id,title:title.isEmpty ? "Untitled":title,previewURL:preview,pageURL:page));if out.count==50{break}};return out}
+
+@MainActor
+final class WorkshopStore: ObservableObject {
+    @Published private(set) var items: [WorkshopItem] = []
+    @Published var query = ""
+    @Published private(set) var loading = false
+    @Published var error: String?
+    private let appID = "431960"
+
+    func search() async {
+        await fetch(url: workshopURL(query: query))
+    }
+
+    func subscribed(steamID: String) async {
+        let url = URL(string: "https://steamcommunity.com/profiles/\(steamID)/myworkshopfiles/?appid=\(appID)&browsefilter=mysubscriptions&sort=lastupdated&view=imagewall")!
+        await fetch(url: url)
+    }
+
+    private func fetch(url: URL) async {
+        loading = true
+        defer { loading = false }
+        do {
+            var request = URLRequest(url: url)
+            request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw WorkshopError.http }
+            let html = String(decoding: data, as: UTF8.self)
+            guard !html.contains("Please log in") else { throw WorkshopError.loginRequired }
+            items = parse(html)
+            if items.isEmpty { throw WorkshopError.noItems }
+        } catch {
+            error = error.localizedDescription
+        }
+    }
+
+    private func workshopURL(query: String) -> URL {
+        var c = URLComponents(string: "https://steamcommunity.com/workshop/browse/")!
+        c.queryItems = [
+            .init(name: "appid", value: appID),
+            .init(name: "section", value: "items")
+        ]
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty { c.queryItems?.append(.init(name: "searchtext", value: text)) }
+        return c.url!
+    }
+
+    private func parse(_ html: String) -> [WorkshopItem] {
+        guard let re = try? NSRegularExpression(
+            pattern: #"<a[^>]+href="([^"]*sharedfiles/filedetails/\?id=(\d+)[^"]*)"[^>]*>(.*?)</a>"#,
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        ) else { return [] }
+
+        var out: [WorkshopItem] = []
+        var seen = Set<String>()
+        for m in re.matches(in: html, range: NSRange(html.startIndex..., in: html)) {
+            guard let ir = Range(m.range(at: 2), in: html),
+                  let hr = Range(m.range(at: 1), in: html),
+                  let tr = Range(m.range(at: 3), in: html) else { continue }
+            let id = String(html[ir])
+            guard seen.insert(id).inserted else { continue }
+            let raw = String(html[hr]).replacingOccurrences(of: "&amp;", with: "&")
+            guard let page = URL(string: raw.hasPrefix("http") ? raw : "https://steamcommunity.com\(raw)") else { continue }
+            let title = String(html[tr]).replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+            let ns = html as NSString
+            let start = max(0, m.range.location - 1500)
+            let window = ns.substring(with: NSRange(location: start, length: min(ns.length - start, m.range.length + 2800)))
+            let p = try? NSRegularExpression(pattern: #"https?://[^"' ]+\.(?:jpg|jpeg|png|webp)"#, options: .caseInsensitive)
+            let preview = p?.firstMatch(in: window, range: NSRange(window.startIndex..., in: window)).flatMap { Range($0.range, in: window) }.flatMap { URL(string: String(window[$0]).replacingOccurrences(of: "&amp;", with: "&")) }
+            out.append(.init(id: id, title: title.isEmpty ? "Untitled" : title, previewURL: preview, pageURL: page))
+            if out.count == 50 { break }
+        }
+        return out
+    }
+}
+
+enum WorkshopError: LocalizedError {
+    case http, loginRequired, noItems
+    var errorDescription: String? {
+        switch self {
+        case .http: "Steam Workshop could not be reached."
+        case .loginRequired: "Steam requires an authenticated Workshop session to show subscriptions."
+        case .noItems: "No Workshop items were found."
+        }
+    }
 }
