@@ -22,10 +22,6 @@ final class DownloadManager: ObservableObject {
         defer { downloading = false }
 
         do {
-            // Steam's public metadata endpoint is the first path. Some Workshop
-            // items, especially Wallpaper Engine scene projects, are multi-file
-            // packages and intentionally have no file_url. Fall back to a
-            // Workshop download resolver for those items.
             if let url = try await SteamWorkshopAPI.fileURL(for: id) {
                 try await downloadURL(url, alreadyMarked: true)
                 if downloadedURL != nil { return }
@@ -39,14 +35,22 @@ final class DownloadManager: ObservableObject {
     }
 
     private func downloadURL(_ url: URL, alreadyMarked: Bool = false) async {
-        if !alreadyMarked { downloading = true; error = nil; downloadedURL = nil }
-        defer { if !alreadyMarked { downloading = false } }
+        if !alreadyMarked {
+            downloading = true
+            error = nil
+            downloadedURL = nil
+        }
+        defer {
+            if !alreadyMarked { downloading = false }
+        }
 
         do {
             var request = URLRequest(url: url)
             request.setValue("LumaForge/1.0", forHTTPHeaderField: "User-Agent")
+
             let (temporaryURL, response) = try await URLSession.shared.download(for: request)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else {
                 throw DownloadError.httpStatus((response as? HTTPURLResponse)?.statusCode ?? -1)
             }
 
@@ -74,7 +78,10 @@ final class DownloadManager: ObservableObject {
 
     private static func filename(response: HTTPURLResponse, fallback: String) -> String {
         if let disposition = response.value(forHTTPHeaderField: "Content-Disposition"),
-           let range = disposition.range(of: #"filename="?([^";]+)"?"#, options: .regularExpression) {
+           let range = disposition.range(
+                of: #"filename="?([^";]+)"?"#,
+                options: .regularExpression
+           ) {
             let value = String(disposition[range])
                 .replacingOccurrences(of: "filename=", with: "")
                 .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
@@ -114,14 +121,19 @@ enum SteamWorkshopAPI {
         let publishedfiledetails: [Details]
     }
 
-    struct Envelope: Decodable { let response: Response }
+    struct Envelope: Decodable {
+        let response: Response
+    }
 
     static func fileURL(for id: String) async throws -> URL? {
         var request = URLRequest(
             url: URL(string: "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/")!
         )
         request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        request.setValue(
+            "application/x-www-form-urlencoded; charset=utf-8",
+            forHTTPHeaderField: "Content-Type"
+        )
         request.httpBody = "itemcount=1&publishedfileids%5B0%5D=\(id)".data(using: .utf8)
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -132,25 +144,33 @@ enum SteamWorkshopAPI {
 
         let envelope = try JSONDecoder().decode(Envelope.self, from: data)
         guard let details = envelope.response.publishedfiledetails.first,
-              details.result == 1 else { return nil }
-        guard let value = details.file_url, !value.isEmpty else { return nil }
+              details.result == 1 else {
+            return nil
+        }
+        guard let value = details.file_url, !value.isEmpty else {
+            return nil
+        }
         return URL(string: value)
     }
 
     static func resolvedDownloadURL(for id: String) async throws -> URL {
-        // GGNetwork currently exposes a resolver for Workshop URLs, including
-        // multi-file items for which Steam's file_url is empty.
-        var request = URLRequest(url: URL(string: "https://api.ggntw.com/steam.request")!)
+        var request = URLRequest(
+            url: URL(string: "https://api.ggntw.com/steam.request")!
+        )
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
         request.setValue("https://ggntw.com", forHTTPHeaderField: "Origin")
         request.setValue("https://ggntw.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
-        let body: [String: String] = [
-            "url": "https://steamcommunity.com/sharedfiles/filedetails/?id=\(id)"
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.setValue(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1",
+            forHTTPHeaderField: "User-Agent"
+        )
+
+        let workshopURL = "https://steamcommunity.com/sharedfiles/filedetails/?id=\(id)"
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: ["url": workshopURL]
+        )
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse,
@@ -162,19 +182,51 @@ enum SteamWorkshopAPI {
             throw DownloadError.resolverFailed
         }
 
-        let nested = object["data"] as? [String: Any]
-        let candidates: [Any?] = [
-            object["download_url"], object["url"], object["link"], object["file"], object["download"],
-            nested?["download_url"], nested?["url"], nested?["link"], nested?["file"]
-        ]
-
-        for candidate in candidates {
-            if let string = candidate as? String, let url = URL(string: string),
-               let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
-                return url
-            }
+        // GGNetwork has returned both { "url": ... } / { "download_url": ... }
+        // and the older { "response": { "url": ... } } shape. Walk the JSON
+        // recursively so changes in nesting do not break downloads.
+        if let url = firstHTTPURL(in: object) {
+            return url
         }
 
         throw DownloadError.resolverFailed
+    }
+
+    private static func firstHTTPURL(in value: Any) -> URL? {
+        if let string = value as? String,
+           let url = URL(string: string),
+           let scheme = url.scheme?.lowercased(),
+           scheme == "http" || scheme == "https" {
+            return url
+        }
+
+        if let dictionary = value as? [String: Any] {
+            let preferredKeys = [
+                "download_url", "downloadUrl", "url", "link", "file", "download"
+            ]
+
+            for key in preferredKeys {
+                if let candidate = dictionary[key],
+                   let url = firstHTTPURL(in: candidate) {
+                    return url
+                }
+            }
+
+            for (_, candidate) in dictionary {
+                if let url = firstHTTPURL(in: candidate) {
+                    return url
+                }
+            }
+        }
+
+        if let array = value as? [Any] {
+            for candidate in array {
+                if let url = firstHTTPURL(in: candidate) {
+                    return url
+                }
+            }
+        }
+
+        return nil
     }
 }
