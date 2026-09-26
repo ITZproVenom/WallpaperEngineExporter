@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] - 2026-09-24
+## [1.1.0] - 2026-09-26\n\n### Added\n- Public Steam Workshop text search without a bundled Web API key.\n- Automatic Workshop library refresh after authentication.\n- Persistent export history with Files sharing and deletion.\n- Permanent storage for completed MP4 exports.\n\n### Fixed\n- My Wallpapers refresh was previously a no-op.\n- Exported files no longer depend on temporary-directory lifetime.\n\n## [1.0.0] - 2026-09-24
 
 ### Added
 - Initial public release of Wallpaper Engine Exporter (iOS).
