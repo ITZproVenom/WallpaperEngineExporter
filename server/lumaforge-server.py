@@ -270,7 +270,9 @@ def locate_source(content, scratch):
 
     pkgs = [p for p in files if p.suffix.lower() == ".pkg" or p.name.lower().endswith(".pkg")]
     for pkg in pkgs:
-        pkg_dir = scratch / "pkg"\n        pkg_dir.mkdir(parents=True, exist_ok=True)\n        found = extract_pkg(pkg, pkg_dir)
+        pkg_dir = scratch / "pkg"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        found = extract_pkg(pkg, pkg_dir)
         if found:
             return found[0]
 
