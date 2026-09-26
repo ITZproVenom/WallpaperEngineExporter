@@ -68,7 +68,7 @@ Built with assistance from **Grok** (xAI).
 - No direct download of Workshop content packages from Steam to iOS.
 - Scene / Web / Application wallpapers cannot be fully rendered or exported on iOS (except embedded video assets when present).
 - Large video exports are memory- and storage-intensive; the app streams frames where possible and cleans up temporary files.
-- Free-text Workshop search requires a Steam Web API key (not bundled).
+- Workshop text search uses Steam Community's public browse endpoint; it does not require a bundled Steam Web API key.\n- The My Wallpapers list can only load subscription/owned items that Steam exposes through the profile's public Workshop page.
 
 ## License
 
