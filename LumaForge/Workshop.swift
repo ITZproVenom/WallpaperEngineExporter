@@ -16,14 +16,14 @@ final class WorkshopStore: ObservableObject {
 
     func setSubscribed(_ items: [WorkshopItem]) {
         self.items = items
-        error = items.isEmpty ? "No subscribed Wallpaper Engine items were found. Sign in to Steam in the subscription page first." : nil
+        if items.isEmpty {
+            error = "No subscribed Wallpaper Engine items were found."
+        }
     }
 
     private func fetch(url: URL) async {
         loading = true
-        error = nil
         defer { loading = false }
-
         do {
             var request = URLRequest(url: url)
             request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
@@ -32,17 +32,11 @@ final class WorkshopStore: ObservableObject {
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 throw WorkshopError.http
             }
-
             let html = String(decoding: data, as: UTF8.self)
-            guard !html.localizedCaseInsensitiveContains("Please log in") else {
-                throw WorkshopError.loginRequired
-            }
-
+            guard !html.contains("Please log in") else { throw WorkshopError.loginRequired }
             let parsed = parse(html)
             items = parsed
-            if parsed.isEmpty {
-                throw WorkshopError.noItems
-            }
+            if parsed.isEmpty { throw WorkshopError.noItems }
         } catch {
             self.error = error.localizedDescription
         }
@@ -52,8 +46,7 @@ final class WorkshopStore: ObservableObject {
         var c = URLComponents(string: "https://steamcommunity.com/workshop/browse/")!
         c.queryItems = [
             .init(name: "appid", value: appID),
-            .init(name: "section", value: "items"),
-            .init(name: "numperpage", value: "30")
+            .init(name: "section", value: "items")
         ]
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.isEmpty {
@@ -63,45 +56,40 @@ final class WorkshopStore: ObservableObject {
     }
 
     private func parse(_ html: String) -> [WorkshopItem] {
-        let pattern = #"(?i)(?:href|data-href)\s*=\s*["']([^"']*sharedfiles/filedetails/\?id=(\d+)[^"']*)["']"#
-        guard let re = try? NSRegularExpression(pattern: pattern) else { return [] }
+        guard let re = try? NSRegularExpression(
+            pattern: #"<a[^>]+href="([^"]*sharedfiles/filedetails/\?id=(\d+)[^"]*)"[^>]*>(.*?)</a>"#,
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        ) else { return [] }
 
         var out: [WorkshopItem] = []
         var seen = Set<String>()
 
-        for match in re.matches(in: html, range: NSRange(html.startIndex..., in: html)) {
-            guard let idRange = Range(match.range(at: 2), in: html),
-                  let urlRange = Range(match.range(at: 1), in: html) else { continue }
+        for m in re.matches(in: html, range: NSRange(html.startIndex..., in: html)) {
+            guard let ir = Range(m.range(at: 2), in: html),
+                  let hr = Range(m.range(at: 1), in: html) else { continue }
 
-            let id = String(html[idRange])
+            let id = String(html[ir])
             guard seen.insert(id).inserted else { continue }
 
-            var raw = String(html[urlRange])
-                .replacingOccurrences(of: "&amp;", with: "&")
-                .replacingOccurrences(of: "\/", with: "/")
-                .replacingOccurrences(of: "&quot;", with: """)
+            let raw = String(html[hr]).replacingOccurrences(of: "&amp;", with: "&")
+            guard let page = URL(string: raw.hasPrefix("http") ? raw : "https://steamcommunity.com\(raw)") else { continue }
 
-            if raw.hasPrefix("//") { raw = "https:" + raw }
-            if raw.hasPrefix("/") { raw = "https://steamcommunity.com" + raw }
-
-            guard let pageURL = URL(string: raw) else { continue }
+            let title = String(html[tr])
+                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
 
             let ns = html as NSString
-            let anchorStart = max(0, match.range.location - 800)
-            let anchorEnd = min(ns.length, match.range.location + match.range.length + 1800)
-            let window = ns.substring(with: NSRange(location: anchorStart, length: anchorEnd - anchorStart))
-
-            let titlePattern = #"(?is)<a[^>]*(?:href|data-href)\s*=\s*["'][^"']*sharedfiles/filedetails/\?id=\d+[^"']*["'][^>]*>(.*?)</a>"#
-            let title = (try? NSRegularExpression(pattern: titlePattern))
-                .flatMap { $0.firstMatch(in: window, range: NSRange(window.startIndex..., in: window)) }
-                .flatMap { Range($0.range(at: 1), in: window) }
-                .map { String(window[$0]) }
-                .map(Self.cleanHTML)
-                ?? "Untitled"
-
-            let previewPattern = #"https?://[^"'\s<>]+\.(?:jpg|jpeg|png|webp)(?:\?[^"'\s<>]*)?"#
-            let preview = (try? NSRegularExpression(pattern: previewPattern, options: .caseInsensitive))
-                .flatMap { $0.firstMatch(in: window, range: NSRange(window.startIndex..., in: window)) }
+            let start = max(0, m.range.location - 1500)
+            let window = ns.substring(with: NSRange(
+                location: start,
+                length: min(ns.length - start, m.range.length + 2800)
+            ))
+            let p = try? NSRegularExpression(
+                pattern: #"https?://[^"' ]+\.(?:jpg|jpeg|png|webp)"#,
+                options: .caseInsensitive
+            )
+            let preview = p?
+                .firstMatch(in: window, range: NSRange(window.startIndex..., in: window))
                 .flatMap { Range($0.range, in: window) }
                 .flatMap { URL(string: String(window[$0]).replacingOccurrences(of: "&amp;", with: "&")) }
 
@@ -109,25 +97,13 @@ final class WorkshopStore: ObservableObject {
                 id: id,
                 title: title.isEmpty ? "Untitled" : title,
                 previewURL: preview,
-                pageURL: pageURL
+                pageURL: page
             ))
 
             if out.count == 50 { break }
         }
 
         return out
-    }
-
-    private static func cleanHTML(_ value: String) -> String {
-        value
-            .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
-            .replacingOccurrences(of: "&amp;", with: "&")
-            .replacingOccurrences(of: "&quot;", with: """)
-            .replacingOccurrences(of: "&#39;", with: "'")
-            .replacingOccurrences(of: "&lt;", with: "<")
-            .replacingOccurrences(of: "&gt;", with: ">")
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -141,7 +117,7 @@ struct SteamSubscriptionsView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default
+        configuration.websiteDataStore = .default()
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
@@ -176,22 +152,22 @@ struct SteamSubscriptionsView: UIViewRepresentable {
 
             let script = """
             (() => {
-                const anchors = Array.from(document.querySelectorAll('a[href*="sharedfiles/filedetails/?id="]'));
-                const seen = new Set();
-                return anchors.map(a => {
-                    const href = a.href || '';
-                    let id = '';
-                    try { id = new URL(href).searchParams.get('id') || ''; } catch (_) {}
-                    const container = a.closest('.workshopItemSubscription, .workshopItem, .workshopItemPreview') || a;
-                    const titleNode = a.querySelector('.workshopItemTitle') || container.querySelector('.workshopItemTitle') || a;
-                    const image = a.querySelector('img') || container.querySelector('img');
+                const nodes = Array.from(document.querySelectorAll('[id^="Subscription"]'));
+                const source = nodes.length ? nodes : Array.from(document.querySelectorAll('.workshopItemSubscriptionDetails'));
+                const items = source.map(node => {
+                    const titleNode = node.querySelector('.workshopItemTitle');
+                    const linkNode = titleNode?.closest('a') || node.querySelector('a[href*="filedetails/?id="]');
+                    const imageNode = node.querySelector('img.workshopItemPreviewImage');
+                    const href = linkNode?.href || '';
+                    const id = new URL(href).searchParams.get('id') || '';
                     return {
-                        id,
+                        id: id,
                         title: (titleNode?.textContent || '').trim(),
-                        href,
-                        preview: image?.src || ''
+                        href: href,
+                        preview: imageNode?.src || ''
                     };
-                }).filter(x => /^\d+$/.test(x.id) && !seen.has(x.id) && (seen.add(x.id), true)).slice(0, 100);
+                }).filter(item => /^\\d+$/.test(item.id));
+                return items;
             })()
             """
 
@@ -210,7 +186,7 @@ struct SteamSubscriptionsView: UIViewRepresentable {
                           seen.insert(id).inserted else { continue }
 
                     let title = (value["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let preview = (value["preview"] as? String).flatMap(URL.init(string))
+                    let preview = (value["preview"] as? String).flatMap(URL.init(string:))
 
                     items.append(.init(
                         id: id,
@@ -238,7 +214,7 @@ enum WorkshopError: LocalizedError {
         case .loginRequired:
             "Steam requires an authenticated Workshop session to show subscriptions."
         case .noItems:
-            "Steam returned no Workshop items."
+            "No Workshop items were found."
         }
     }
 }
