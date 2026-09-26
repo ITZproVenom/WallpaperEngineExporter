@@ -217,8 +217,7 @@ def supabase_resolver_download(workshop_id, target):
         "User-Agent": "LumaForge/3.0",
     })
     try:
-        with urllib.request.urlopen(request, timeout=90) as response:
-            data = json.loads(response.read().decode("utf-8"))
+        with urllib.request.urlopen(request, timeout=90) as response:            data = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         raise RuntimeError(f"LumaForge resolver returned HTTP {exc.code}")
     except urllib.error.URLError as exc:
@@ -439,7 +438,6 @@ def write_tex_as_png(data, output):
         h = max(1, h // 2)
     return False
 
-
 def extract_pkg(pkg, out_dir):
     data = pkg.read_bytes()
     if len(data) < 8:
@@ -638,7 +636,6 @@ def process_job(job_id, workshop_id):
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "LumaForgeServer/3.0"
-
     def json(self, status, payload):
         body = json.dumps(payload).encode()
         self.send_response(status)
@@ -766,6 +763,84 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         print(f"[lumaforge] {self.address_string()} {fmt % args}")
+
+SCENE_RENDERER = os.getenv("SCENE_RENDERER", "/app/scene_renderer.mjs")
+SCENE_RENDER_WIDTH = int(os.getenv("SCENE_RENDER_WIDTH", "1280"))
+SCENE_RENDER_HEIGHT = int(os.getenv("SCENE_RENDER_HEIGHT", "720"))
+SCENE_RENDER_SECONDS = int(os.getenv("SCENE_RENDER_SECONDS", "6"))
+SCENE_RENDER_FPS = int(os.getenv("SCENE_RENDER_FPS", "30"))
+
+
+def find_scene_pkg(content):
+    candidates = [
+        p for p in content.rglob("scene.pkg")
+        if p.is_file()
+    ]
+    if candidates:
+        return max(candidates, key=lambda p: p.stat().st_size)
+    candidates = [
+        p for p in content.rglob("*.pkg")
+        if p.is_file() and p.name.lower() == "scene.pkg"
+    ]
+    return max(candidates, key=lambda p: p.stat().st_size) if candidates else None
+
+
+def render_scene_pkg_to_mp4(pkg, output, scratch):
+    if not Path(SCENE_RENDERER).is_file():
+        raise RuntimeError("Server scene renderer is not installed")
+    if shutil.which("node") is None:
+        raise RuntimeError("Server scene renderer requires Node.js")
+    webm = scratch / ("scene-" + uuid.uuid4().hex + ".webm")
+    run([
+        "node", SCENE_RENDERER, str(pkg), str(webm),
+        str(SCENE_RENDER_WIDTH), str(SCENE_RENDER_HEIGHT),
+        str(SCENE_RENDER_SECONDS), str(SCENE_RENDER_FPS)
+    ], timeout=max(600, SCENE_RENDER_SECONDS * 120))
+    if not webm.is_file() or webm.stat().st_size < 1024:
+        raise RuntimeError("Scene renderer produced no usable video")
+    ffmpeg_video_to_mp4(webm, output)
+    return output
+
+
+def process_job(job_id, workshop_id):
+    with slots:
+        work = ROOT / ("job-" + job_id)
+        download_dir = work / "steam"
+        scratch = work / "scratch"
+        output = ROOT / (job_id + ".mp4")
+        try:
+            work.mkdir(parents=True, exist_ok=True)
+            scratch.mkdir(parents=True, exist_ok=True)
+            set_job(job_id, status="downloading", progress=15)
+            content = acquire_workshop(workshop_id, download_dir)
+            set_job(job_id, status="converting", progress=60)
+
+            scene_pkg = find_scene_pkg(content)
+            if scene_pkg is not None:
+                print(f"[lumaforge] rendering scene.pkg for workshop {workshop_id}: {scene_pkg}", flush=True)
+                render_scene_pkg_to_mp4(scene_pkg, output, scratch)
+            else:
+                source = locate_source(content, scratch)
+                if source.suffix.lower() in {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi", ".wmv"}:
+                    ffmpeg_video_to_mp4(source, output)
+                elif source.suffix.lower() == ".gif":
+                    ffmpeg_gif_to_mp4(source, output)
+                else:
+                    ffmpeg_image_to_mp4(source, output)
+
+            if not output.is_file() or output.stat().st_size < 1024:
+                raise RuntimeError("FFmpeg produced an invalid MP4")
+            set_job(job_id, status="completed", progress=100,
+                    filename=output.name,
+                    download_url=f"{PUBLIC_BASE_URL}/v1/files/{output.name}" if PUBLIC_BASE_URL else None)
+        except subprocess.TimeoutExpired:
+            print(f"[lumaforge] job {job_id} timed out for workshop {workshop_id}", flush=True)
+            set_job(job_id, status="failed", progress=100, error="Server conversion timed out")
+        except Exception as exc:
+            print(f"[lumaforge] job {job_id} failed for workshop {workshop_id}: {exc}", flush=True)
+            set_job(job_id, status="failed", progress=100, error=str(exc))
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
 
 
 if __name__ == "__main__":
