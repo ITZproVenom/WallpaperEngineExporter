@@ -56,37 +56,17 @@ def run(cmd, timeout=600):
 
 
 def steamcmd_download(workshop_id, target):
-    steam_user = os.getenv("STEAM_USERNAME", "").strip()
-    steam_password = os.getenv("STEAM_PASSWORD", "")
-    steam_guard = os.getenv("STEAM_GUARD_CODE", "").strip()
-
-    login = ["+login", "anonymous"]
-    if steam_user and steam_password:
-        login = ["+login", steam_user, steam_password]
-        if steam_guard:
-            login.append(steam_guard)
-
     output = run([
         STEAMCMD, "+@ShutdownOnFailedCommand", "1",
         "+@NoPromptForPassword", "1",
         "+force_install_dir", str(target),
-        *login,
+        "+login", "anonymous",
         "+workshop_download_item", APP_ID, workshop_id, "validate", "+quit"
     ], timeout=600)
-
     content = target / "steamapps" / "workshop" / "content" / APP_ID / workshop_id
     if content.is_dir():
         return content
-
-    if steam_user:
-        raise RuntimeError(
-            "Authenticated SteamCMD could not download this Workshop item. "
-            "Check Steam ownership, Steam Guard, and the Workshop ID."
-        )
-    raise RuntimeError(
-        "Wallpaper Engine Workshop requires an authenticated Steam account on this server. "
-        "Set STEAM_USERNAME and STEAM_PASSWORD as server secrets, plus STEAM_GUARD_CODE when required."
-    )
+    raise RuntimeError("SteamCMD returned no Workshop content")
 def ffmpeg_image_to_mp4(image, output):
     run([
         "ffmpeg", "-y", "-loop", "1", "-i", str(image),
@@ -428,6 +408,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    authenticated = bool(os.getenv("STEAM_USERNAME"))
-    print(f"[lumaforge] starting on {HOST}:{PORT}; steamcmd={STEAMCMD}; root={ROOT}; authenticated={authenticated}", flush=True)
+    print(f"[lumaforge] starting on {HOST}:{PORT}; steamcmd={STEAMCMD}; root={ROOT}", flush=True)
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
