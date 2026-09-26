@@ -25,6 +25,14 @@ final class ExportStore: ObservableObject {
             .filter { !$0.lastPathComponent.hasPrefix(".") }) ?? []
     }
 
+    func deleteImported(_ url: URL) {
+        do {
+            try fm.removeItem(at: url)
+        } catch {
+            self.error = "Could not delete (url.lastPathComponent)."
+        }
+    }
+
     func export(_ source: URL) async {
         do {
             guard let asset = try PackageInspector.assets(in: source).first else { throw ExportError.unsupported }
