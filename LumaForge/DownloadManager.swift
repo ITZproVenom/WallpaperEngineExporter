@@ -63,7 +63,7 @@ final class DownloadManager: ObservableObject {
 
             if Self.looksLikeHTML(response: http, fileURL: temporaryURL) {
                 let html = try String(contentsOf: temporaryURL, encoding: .utf8)
-                let candidates = Self.extractDownloadCandidates(from: html, baseURL: response.url ?? url)
+                let candidates = Self.extractDownloadCandidates(from: html, baseURL: http.url ?? url)
 
                 guard let next = candidates.first else {
                     throw DownloadError.htmlWithoutDownload
@@ -125,9 +125,10 @@ final class DownloadManager: ObservableObject {
 
         func add(_ raw: String, score: Int) {
             let cleaned = decodeHTMLEntities(
-                raw.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+                raw.trimmingCharacters(in: .whitespacesAndNewlines)
                     .replacingOccurrences(of: "\\/", with: "/")
             )
+
             guard !cleaned.isEmpty,
                   let url = URL(string: cleaned, relativeTo: baseURL)?.absoluteURL,
                   let scheme = url.scheme?.lowercased(),
@@ -137,32 +138,46 @@ final class DownloadManager: ObservableObject {
 
             let lower = url.absoluteString.lowercased()
             var finalScore = score
-            if lower.range(of: #"\\.(pkg|zip|7z|rar|tar|gz|mp4|webm|mov|m4v)(?:[?#]|$)"#, options: .regularExpression) != nil { finalScore += 100 }
-            if lower.range(of: #"download|direct|transmit|cdn|file"#, options: .regularExpression) != nil { finalScore += 25 }
-            if lower.range(of: #"steamcommunity\\.com|steamworkshopdownloader|captcha|cloudflare"#, options: .regularExpression) != nil { finalScore -= 20 }
+
+            if ["pkg", "zip", "7z", "rar", "tar", "gz", "mp4", "webm", "mov", "m4v"].contains(url.pathExtension.lowercased()) {
+                finalScore += 100
+            }
+            if lower.contains("download") || lower.contains("direct") || lower.contains("transmit") ||
+                lower.contains("cdn") || lower.contains("file") {
+                finalScore += 25
+            }
+            if lower.contains("steamcommunity.com") || lower.contains("steamworkshopdownloader") ||
+                lower.contains("captcha") || lower.contains("cloudflare") {
+                finalScore -= 20
+            }
+
             scored.append((finalScore, url))
         }
 
-        let attrPattern = #"(?:href|src|data-url|data-download-url|data-href|data-file|action)\\s*=\\s*[\"']([^\"']+)[\"']"# 
+        let attrPattern = #"(?:href|src|data-url|data-download-url|data-href|data-file|action)\s*=\s*["']([^"']+)["']"#
         if let regex = try? NSRegularExpression(pattern: attrPattern, options: [.caseInsensitive]) {
             let range = NSRange(html.startIndex..<html.endIndex, in: html)
             for match in regex.matches(in: html, range: range) {
-                if let valueRange = Range(match.range(at: 1), in: html) {
-                    let raw = String(html[valueRange])
-                    let context = String(html[max(html.startIndex, valueRange.lowerBound.advanced(by: -180))..<min(html.endIndex, valueRange.upperBound.advanced(by: 180))]).lowercased()
-                    add(raw, score: /download|direct|transmit/.test(context) ? 80 : 20)
-                }
+                guard let valueRange = Range(match.range(at: 1), in: html) else { continue }
+                let raw = String(html[valueRange])
+                let contextStart = html.index(valueRange.lowerBound, offsetBy: -180, limitedBy: html.startIndex) ?? html.startIndex
+                let contextEnd = html.index(valueRange.upperBound, offsetBy: 180, limitedBy: html.endIndex) ?? html.endIndex
+                let context = String(html[contextStart..<contextEnd]).lowercased()
+                let score = context.contains("download") || context.contains("direct") || context.contains("transmit") ? 80 : 20
+                add(raw, score: score)
             }
         }
 
-        let absolutePattern = #"https?://[^\"'<>\\s]+?"#
+        let absolutePattern = #"https?://[^"'<>\s]+"#
         if let regex = try? NSRegularExpression(pattern: absolutePattern, options: [.caseInsensitive]) {
             let range = NSRange(html.startIndex..<html.endIndex, in: html)
             for match in regex.matches(in: html, range: range) {
-                if let valueRange = Range(match.range, in: html) {
-                    let raw = String(html[valueRange]).trimmingCharacters(in: ".,);")
-                    let score = raw.lowercased().range(of: #"download|direct|transmit|cdn|file"#, options: .regularExpression) != nil ? 60 : 5\n                    add(raw, score: score)
-                }
+                guard let valueRange = Range(match.range, in: html) else { continue }
+                let raw = String(html[valueRange]).trimmingCharacters(in: ".,);")
+                let lower = raw.lowercased()
+                let score = lower.contains("download") || lower.contains("direct") ||
+                    lower.contains("transmit") || lower.contains("cdn") || lower.contains("file") ? 60 : 5
+                add(raw, score: score)
             }
         }
 
@@ -171,7 +186,7 @@ final class DownloadManager: ObservableObject {
                 if $0.score != $1.score { return $0.score > $1.score }
                 return $0.url.absoluteString.count < $1.url.absoluteString.count
             }
-            .map(\\.url)
+            .map { $0.url }
     }
 
     private static func decodeHTMLEntities(_ value: String) -> String {
@@ -185,7 +200,7 @@ final class DownloadManager: ObservableObject {
     private static func filename(response: HTTPURLResponse, fallback: String) -> String {
         if let disposition = response.value(forHTTPHeaderField: "Content-Disposition"),
            let range = disposition.range(
-                of: #\"filename=\"?([^\";]+)\"?\"#,
+                of: #"filename="?([^";]+)"?"#,
                 options: .regularExpression
            ) {
             let value = String(disposition[range])
