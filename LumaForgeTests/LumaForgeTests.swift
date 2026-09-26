@@ -8,22 +8,18 @@ final class LumaForgeTests: XCTestCase {
         XCTAssertNil(SteamOpenID.steamID(from: u, expectedState: "bad"))
     }
 
-    func testHTMLDownloadCandidateExtraction() {
-        let html = """
-        <html>
-          <a class="download" href="/files/scene.pkg">Download</a>
-          <a href="https://example.com/landing">Other</a>
-        </html>
-        """
-        let base = URL(string: "https://example.com/page")!
-        let urls = DownloadManager.extractDownloadCandidates(from: html, baseURL: base)
-        XCTAssertEqual(urls.first?.absoluteString, "https://example.com/files/scene.pkg")
+    func testWorkshopIDExtraction() {
+        let url = URL(string: "https://steamcommunity.com/sharedfiles/filedetails/?id=3547355412")!
+        XCTAssertEqual(DownloadManager.workshopID(from: url), "3547355412")
     }
 
-    func testHTMLDownloadCandidateEntityDecoding() {
-        let html = #"<a data-download-url="https://cdn.example.com/file.pkg?x=1&amp;y=2">Download</a>"#
-        let base = URL(string: "https://example.com/page")!
-        let urls = DownloadManager.extractDownloadCandidates(from: html, baseURL: base)
-        XCTAssertEqual(urls.first?.absoluteString, "https://cdn.example.com/file.pkg?x=1&y=2")
+    func testWorkshopIDRejectsNonSteamURLs() {
+        let url = URL(string: "https://example.com/sharedfiles/filedetails/?id=3547355412")!
+        XCTAssertNil(DownloadManager.workshopID(from: url))
+    }
+
+    func testWorkshopIDRejectsMalformedIDs() {
+        let url = URL(string: "https://steamcommunity.com/sharedfiles/filedetails/?id=abc")!
+        XCTAssertNil(DownloadManager.workshopID(from: url))
     }
 }
