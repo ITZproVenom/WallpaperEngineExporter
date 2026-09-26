@@ -58,8 +58,9 @@ def run(cmd, timeout=600):
 def steamcmd_download(workshop_id, target):
     output = run([
         STEAMCMD, "+@ShutdownOnFailedCommand", "1",
-        "+@NoPromptForPassword", "1", "+login", "anonymous",
+        "+@NoPromptForPassword", "1",
         "+force_install_dir", str(target),
+        "+login", "anonymous",
         "+workshop_download_item", APP_ID, workshop_id, "validate", "+quit"
     ], timeout=600)
     content = target / "steamapps" / "workshop" / "content" / APP_ID / workshop_id
