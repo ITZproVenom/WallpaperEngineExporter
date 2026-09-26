@@ -6,7 +6,7 @@ final class DownloadManager: ObservableObject {
     @Published private(set) var downloadedURL: URL?
     @Published var error: String?
 
-    private static let maxHTMLHops = 4
+    private static let maxHTMLHops = 12
 
     func download(_ text: String) {
         guard let url = Self.validURL(text) else {
@@ -36,7 +36,7 @@ final class DownloadManager: ObservableObject {
         }
     }
 
-    private func downloadURL(_ url: URL, alreadyMarked: Bool = false, hop: Int = 0) async {
+    private func downloadURL(_ url: URL, alreadyMarked: Bool = false, hop: Int = 0, visited: Set<String> = []) async {
         if !alreadyMarked {
             downloading = true
             error = nil
@@ -50,6 +50,13 @@ final class DownloadManager: ObservableObject {
             guard hop <= Self.maxHTMLHops else {
                 throw DownloadError.tooManyRedirectPages
             }
+
+            let normalizedURL = url.absoluteString
+            guard !visited.contains(normalizedURL) else {
+                throw DownloadError.redirectLoop
+            }
+            var nextVisited = visited
+            nextVisited.insert(normalizedURL)
 
             var request = URLRequest(url: url)
             request.setValue("LumaForge/1.0", forHTTPHeaderField: "User-Agent")
@@ -70,7 +77,7 @@ final class DownloadManager: ObservableObject {
                 }
 
                 try? FileManager.default.removeItem(at: temporaryURL)
-                await downloadURL(next, alreadyMarked: true, hop: hop + 1)
+                await downloadURL(next, alreadyMarked: true, hop: hop + 1, visited: nextVisited)
                 return
             }
 
@@ -220,6 +227,7 @@ enum DownloadError: LocalizedError {
     case resolverMessage(String)
     case htmlWithoutDownload
     case tooManyRedirectPages
+    case redirectLoop
 
     var errorDescription: String? {
         switch self {
@@ -237,6 +245,8 @@ enum DownloadError: LocalizedError {
             return "The Workshop downloader returned a webpage without a usable file link."
         case .tooManyRedirectPages:
             return "The Workshop downloader returned too many intermediate webpages."
+        case .redirectLoop:
+            return "The Workshop downloader entered a redirect loop."
         }
     }
 }
