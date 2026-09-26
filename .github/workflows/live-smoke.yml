@@ -28,7 +28,7 @@ jobs:
           curl -fsS --max-time 20 \
             -X POST \
             -H 'Content-Type: application/json' \
-            -d '{"workshop_id":"3556794116"}' \
+            -d '{"workshop_id":"858730156"}' \
             https://lumaforge-worker.onrender.com/v1/jobs > job.json
           cat job.json
           python3 - <<'PY'
