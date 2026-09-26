@@ -254,9 +254,9 @@ jobs:
           | Signing | **Unsigned** (CODE_SIGNING_ALLOWED=NO) |
           | Workflow | [run](${RUN_URL}) |
 
-          ### Steam auth (build 17)
+          ### Steam auth (build 18)
 
-          Dual-path OpenID: ASWebAuthenticationSession + WKWebView intercept of HTTPS return_to.
+          Dual-path OpenID: ASWebAuthenticationSession + WKWebView intercept of the HTTPS return_to callback.
 
           ### Asset
 
