@@ -511,34 +511,36 @@ def safe_extract_zip(archive, target):
 
 
 def locate_source(content, scratch):
-    media = {".mp4", ".mov", ".m4v", ".webm", ".png", ".jpg", ".jpeg", ".gif", ".webp"}
+    video_exts = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi", ".wmv"}
+    image_exts = {".png", ".jpg", ".jpeg", ".webp"}
+    preview_names = {
+        "preview.jpg", "preview.jpeg", "preview.png",
+        "thumbnail.jpg", "thumbnail.jpeg", "thumbnail.png",
+        "cover.jpg", "cover.png"
+    }
     files = [p for p in content.rglob("*") if p.is_file()]
 
-    # Never choose preview.jpg/thumbnail assets before the actual wallpaper.
-    # Workshop scene wallpapers commonly contain a preview image next to scene.pkg.
-    # Prefer native video, then an animated preview, then the package, and only
-    # use a loose still image as the final fallback.
-    videos = [p for p in files if p.suffix.lower() in {".mp4", ".mov", ".m4v", ".webm"}]
+    # Native video is already the actual wallpaper media.
+    videos = [p for p in files if p.suffix.lower() in video_exts]
     if videos:
         return videos[0]
 
-    gifs = [p for p in files if p.suffix.lower() == ".gif"]
-    if gifs:
-        return gifs[0]
-
+    # ZIPs may contain a complete Workshop project.
     zips = [p for p in files if p.suffix.lower() == ".zip"]
-    for z in zips:
+    for archive_path in zips:
         target = scratch / ("zip-" + uuid.uuid4().hex)
         target.mkdir()
         try:
-            with zipfile.ZipFile(z) as archive:
+            with zipfile.ZipFile(archive_path) as archive:
                 safe_extract_zip(archive, target)
             found = locate_source(target, scratch)
             if found:
                 return found
         except zipfile.BadZipFile:
-            pass
+            continue
 
+    # PKG is the native scene container. Never silently replace it with
+    # preview.jpg when its actual assets cannot be decoded.
     pkgs = [p for p in files if p.suffix.lower() == ".pkg" or p.name.lower().endswith(".pkg")]
     for pkg in pkgs:
         pkg_dir = scratch / ("pkg-" + uuid.uuid4().hex)
@@ -546,25 +548,32 @@ def locate_source(content, scratch):
         found = extract_pkg(pkg, pkg_dir)
         if found:
             return found[0]
+    if pkgs:
+        raise RuntimeError(
+            "This Wallpaper Engine scene.pkg could not be rendered by the server. "
+            "The preview image was not used as a substitute."
+        )
+
+    # Standalone animated GIFs and ordinary image wallpapers are supported.
+    gifs = [p for p in files if p.suffix.lower() == ".gif" and p.name.lower() not in preview_names]
+    if gifs:
+        return gifs[0]
 
     images = [
         p for p in files
-        if p.suffix.lower() in media - {".mp4", ".mov", ".m4v", ".webm", ".gif"}
-        and p.name.lower() not in {"preview.jpg", "preview.jpeg", "thumbnail.jpg", "thumbnail.jpeg", "cover.jpg", "cover.png"}
+        if p.suffix.lower() in image_exts and p.name.lower() not in preview_names
     ]
     if images:
         return images[0]
 
-    # A preview is still preferable to a hard failure when the Workshop item
-    # only ships its preview image alongside an unsupported package.
-    previews = [
-        p for p in files
-        if p.name.lower() in {"preview.jpg", "preview.jpeg", "thumbnail.jpg", "thumbnail.jpeg", "cover.jpg", "cover.png"}
-    ]
-    if previews:
-        return previews[0]
+    # Preview-only downloads are metadata, not the wallpaper itself.
+    if any(p.name.lower() in preview_names for p in files):
+        raise RuntimeError(
+            "The Workshop item only exposed preview media; the actual wallpaper "
+            "content was not available for conversion."
+        )
 
-    raise RuntimeError("No convertible media was found in the Workshop package")
+    raise RuntimeError("No supported wallpaper media was found in the Workshop package")
 
 
 def process_job(job_id, workshop_id):
@@ -580,7 +589,7 @@ def process_job(job_id, workshop_id):
             content = acquire_workshop(workshop_id, download_dir)
             set_job(job_id, status="converting", progress=60)
             source = locate_source(content, scratch)
-            if source.suffix.lower() in {".mp4", ".mov", ".m4v", ".webm"}:
+            if source.suffix.lower() in {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi", ".wmv"}:
                 ffmpeg_video_to_mp4(source, output)
             elif source.suffix.lower() == ".gif":
                 ffmpeg_gif_to_mp4(source, output)
@@ -602,7 +611,7 @@ def process_job(job_id, workshop_id):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "LumaForgeServer/2.0"
+    server_version = "LumaForgeServer/3.0"
 
     def json(self, status, payload):
         body = json.dumps(payload).encode()
@@ -629,6 +638,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json(400, {"error": "Invalid Workshop ID"})
         except Exception:
             return self.json(400, {"error": "Invalid JSON"})
+
+        with jobs_lock:
+            live_jobs = sum(
+                1 for job in jobs.values()
+                if job.get("status") in {"queued", "downloading", "converting"}
+            )
+            if live_jobs >= MAX_MEMORY_JOBS:
+                return self.json(429, {"error": "Too many jobs are currently queued."})
 
         job_id = uuid.uuid4().hex
         with jobs_lock:
@@ -657,7 +674,15 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/health":
-            return self.json(200, {"ok": True, "service": "lumaforge", "providers": WORKSHOP_PROVIDER, "converter": "ffmpeg", "git_commit": os.getenv("RENDER_GIT_COMMIT", "")})
+            return self.json(200, {
+                "ok": True,
+                "service": "lumaforge",
+                "version": "3.0",
+                "providers": WORKSHOP_PROVIDER,
+                "converter": "ffmpeg",
+                "server_side_only": True,
+                "git_commit": os.getenv("RENDER_GIT_COMMIT", "")
+            })
 
         if path.startswith("/v1/jobs/"):
             if not self.authorized():
@@ -670,6 +695,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.json(200, job)
 
         if path.startswith("/v1/files/"):
+            if not self.authorized():
+                return self.json(401, {"error": "Unauthorized"})
             name = Path(path.rsplit("/", 1)[-1]).name
             file = ROOT / name
             if not file.is_file() or file.suffix.lower() != ".mp4":
@@ -697,11 +724,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.json(404, {"error": "Not found"})
         job_id = path.rsplit("/", 1)[-1]
         with jobs_lock:
-            job = jobs.pop(job_id, None)
-        if not job:
-            return self.json(404, {"error": "Job not found"})
-        if job.get("status") in {"queued", "downloading", "converting"}:
-            return self.json(409, {"error": "Job is still running"})
+            job = jobs.get(job_id)
+            if not job:
+                return self.json(404, {"error": "Job not found"})
+            if job.get("status") in {"queued", "downloading", "converting"}:
+                return self.json(409, {"error": "Job is still running"})
+            jobs.pop(job_id, None)
         filename = job.get("filename")
         if filename:
             try:
