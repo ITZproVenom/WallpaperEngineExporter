@@ -128,16 +128,16 @@ struct ExportSettingsView: View {
                         }
                     }
                 )
-                let savedURL: URL
+                let savedRecord: ExportRecord
                 do {
-                    savedURL = try ExportHistoryStore.save(tempURL: url, title: item.title)
+                    savedRecord = try ExportHistoryStore.save(tempURL: url, title: item.title)
                 } catch {
                     try? FileManager.default.removeItem(at: url)
                     throw error
                 }
                 await MainActor.run {
                     isExporting = false
-                    exportedURL = savedURL
+                    exportedURL = savedRecord.path
                 }
             } catch {
                 await MainActor.run {
