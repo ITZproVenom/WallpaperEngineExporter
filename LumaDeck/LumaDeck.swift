@@ -45,7 +45,7 @@ struct ExportItem: Identifiable, Codable, Hashable {
             let (d, _) = try await URLSession.shared.data(for: r)
             let html = String(decoding: d, as: UTF8.self)
             wallpapers = parse(html)
-        } catch { error = error.localizedDescription }
+        } catch { self.error = error.localizedDescription }
     }
 
     private func parse(_ html: String) -> [Wallpaper] {
@@ -185,7 +185,54 @@ struct Library: View { @ObservedObject var s:Store; @State private var pick=fals
     Section("Imported"){if s.imports.isEmpty{ContentUnavailableView("Library empty",systemImage:"rectangle.stack")}else{ForEach(s.imports,id:\.self){u in HStack{Image(systemName:u.pathExtension.lowercased()=="mp4" ? "film":"photo");Text(u.lastPathComponent).lineLimit(1);Spacer();Button("MP4"){busy=true;Task{do{try await s.export(u)}catch{s.error=error.localizedDescription};busy=false}}.buttonStyle(.bordered)}}}}
 }.navigationTitle("Library").fileImporter(isPresented:$pick,allowedContentTypes:[.movie,.image],allowsMultipleSelection:true){r in if case .success(let u)=r{s.importURLs(u)}}.overlay{if busy{ProgressView().padding(20).background(.regularMaterial,in:RoundedRectangle(cornerRadius:16))}} } } }
 
-struct Exports: View { @ObservedObject var s:Store; var body:some View{NavigationStack{List{if s.exports.isEmpty{ContentUnavailableView("No exports yet",systemImage:"arrow.down.circle")}else{ForEach(s.exports){e in HStack{Image(systemName:"film");VStack(alignment:.leading){Text(e.name);Text(e.date.formatted(date:.abbreviated,time:.shortened)).font(.caption).foregroundStyle(.secondary)}Spacer();ShareLink(item:s.exportURL(e)){Image(systemName:"square.and.arrow.up")}.buttonStyle(.borderless)}}.onDelete{idx in idx.map{s.exports[$0]}.forEach(s.deleteExport)}}}.navigationTitle("Exports")}}}
-struct Settings: View { var body:some View{NavigationStack{List{Section("LumaDeck"){LabeledContent("Version","1.0");LabeledContent("Steam App ID","431960")}Section("About"){Text("Clean-room rebuild from the original Wallpaper Engine mobile discovery/export idea. No previous project implementation is used.")}}.navigationTitle("Settings")}}}
+struct Exports: View {
+    @ObservedObject var s: Store
+    var body: some View {
+        NavigationStack {
+            List {
+                if s.exports.isEmpty {
+                    ContentUnavailableView("No exports yet", systemImage: "arrow.down.circle")
+                } else {
+                    ForEach(s.exports) { e in
+                        HStack {
+                            Image(systemName: "film")
+                            VStack(alignment: .leading) {
+                                Text(e.name)
+                                Text(e.date.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            ShareLink(item: s.exportURL(e)) {
+                                Image(systemName: "square.and.arrow.up")
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                    .onDelete { indexSet in
+                        for index in indexSet { s.deleteExport(s.exports[index]) }
+                    }
+                }
+            }
+            .navigationTitle("Exports")
+        }
+    }
+}
 
+struct Settings: View {
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("LumaDeck") {
+                    LabeledContent("Version", value: "1.0")
+                    LabeledContent("Steam App ID", value: "431960")
+                }
+                Section("About") {
+                    Text("Clean-room rebuild from the original Wallpaper Engine mobile discovery/export idea. No previous project implementation is used.")
+                }
+            }
+            .navigationTitle("Settings")
+        }
+    }
+}
 @main struct LumaDeckApp: App { var body:some Scene { WindowGroup { ContentView() } } }
