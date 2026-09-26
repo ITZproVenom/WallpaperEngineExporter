@@ -9,10 +9,9 @@ import threading
 import time
 import uuid
 import zipfile
-import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse, quote
+from urllib.parse import urlparse
 
 APP_ID = "431960"
 HOST = os.getenv("HOST", "0.0.0.0")
@@ -56,83 +55,38 @@ def run(cmd, timeout=600):
     return result.stdout
 
 
-def resolver_download(workshop_id, target):
-    api = os.getenv("WORKSHOP_RESOLVER_API", "https://steamworkshopdownloader.io/api").rstrip("/")
-    request_body = json.dumps({
-        "publishedFileId": int(workshop_id),
-        "collectionId": None,
-        "extract": True,
-        "hidden": False,
-        "direct": False,
-        "autodownload": False
-    }).encode()
-    req = urllib.request.Request(
-        api + "/download/request",
-        data=request_body,
-        headers={"Content-Type": "application/json"},
-        method="POST"
-    )
-    with urllib.request.urlopen(req, timeout=30) as response:
-        created = json.loads(response.read().decode())
-    token = created.get("uuid")
-    if not token:
-        raise RuntimeError("Workshop resolver returned no job ID")
-
-    deadline = time.time() + 600
-    while time.time() < deadline:
-        status_req = urllib.request.Request(
-            api + "/download/status",
-            data=json.dumps({"uuids": [token]}).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        with urllib.request.urlopen(status_req, timeout=30) as response:
-            status = json.loads(response.read().decode())
-        item = status.get(token, status if "progress" in status else {})
-        progress_text = str(item.get("progressText", "")).lower()
-        if "failed" in progress_text or str(item.get("status", "")).lower() == "error":
-            raise RuntimeError("Workshop resolver download failed")
-        try:
-            progress = float(item.get("progress", 0))
-        except (TypeError, ValueError):
-            progress = 0
-        if progress >= 100:
-            archive_path = target.parent / (workshop_id + "-resolver.zip")
-            urllib.request.urlretrieve(
-                api + "/download/transmit?uuid=" + quote(token),
-                archive_path
-            )
-            target.mkdir(parents=True, exist_ok=True)
-            with zipfile.ZipFile(archive_path) as archive:
-                safe_extract_zip(archive, target)
-            archive_path.unlink(missing_ok=True)
-            return target
-        time.sleep(2)
-
-    raise RuntimeError("Workshop resolver timed out")
-
-
 def steamcmd_download(workshop_id, target):
-    steam_error = None
+    steam_user = os.getenv("STEAM_USERNAME", "").strip()
+    steam_password = os.getenv("STEAM_PASSWORD", "")
+    steam_guard = os.getenv("STEAM_GUARD_CODE", "").strip()
+
+    login = ["+login", "anonymous"]
+    if steam_user and steam_password:
+        login = ["+login", steam_user, steam_password]
+        if steam_guard:
+            login.append(steam_guard)
+
     output = run([
         STEAMCMD, "+@ShutdownOnFailedCommand", "1",
         "+@NoPromptForPassword", "1",
         "+force_install_dir", str(target),
-        "+login", "anonymous",
+        *login,
         "+workshop_download_item", APP_ID, workshop_id, "validate", "+quit"
     ], timeout=600)
+
     content = target / "steamapps" / "workshop" / "content" / APP_ID / workshop_id
     if content.is_dir():
         return content
 
-    steam_error = "SteamCMD returned no Workshop content"
-    print(f"[lumaforge] SteamCMD could not fetch {workshop_id}; trying public resolver", flush=True)
-    try:
-        resolver_root = target.parent / "resolver"
-        return resolver_download(workshop_id, resolver_root)
-    except Exception as resolver_exc:
-        print(f"[lumaforge] public resolver failed for {workshop_id}: {resolver_exc}", flush=True)
-        raise RuntimeError(f"{steam_error}; public resolver failed: {resolver_exc}")
+    if steam_user:
+        raise RuntimeError(
+            "Authenticated SteamCMD could not download this Workshop item. "
+            "Check Steam ownership, Steam Guard, and the Workshop ID."
+        )
+    raise RuntimeError(
+        "Wallpaper Engine Workshop requires an authenticated Steam account on this server. "
+        "Set STEAM_USERNAME and STEAM_PASSWORD as server secrets, plus STEAM_GUARD_CODE when required."
+    )
 def ffmpeg_image_to_mp4(image, output):
     run([
         "ffmpeg", "-y", "-loop", "1", "-i", str(image),
@@ -474,5 +428,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"[lumaforge] starting on {HOST}:{PORT}; steamcmd={STEAMCMD}; root={ROOT}", flush=True)
+    print(f"[lumaforge] starting on {HOST}:{PORT}; steamcmd={STEAMCMD}; root={ROOT}; authenticated={bool(os.getenv(\"STEAM_USERNAME\"))}", flush=True)
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
