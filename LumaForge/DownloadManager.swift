@@ -87,6 +87,7 @@ final class DownloadManager: ObservableObject {
 enum DownloadError: LocalizedError {
     case httpStatus(Int)
     case noDirectFile
+    case resolverHTTP(Int)
     case resolverFailed
 
     var errorDescription: String? {
@@ -95,8 +96,10 @@ enum DownloadError: LocalizedError {
             return "Download failed with HTTP \(code)."
         case .noDirectFile:
             return "Steam did not expose a public file URL for this Workshop item."
+        case .resolverHTTP(let code):
+            return "Workshop resolver returned HTTP (code)."
         case .resolverFailed:
-            return "The Workshop download resolver could not prepare this item."
+            return "The Workshop download resolver returned no download URL."
         }
     }
 }
@@ -141,6 +144,9 @@ enum SteamWorkshopAPI {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
+        request.setValue("https://ggntw.com", forHTTPHeaderField: "Origin")
+        request.setValue("https://ggntw.com/", forHTTPHeaderField: "Referer")
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
         let body: [String: String] = [
             "url": "https://steamcommunity.com/sharedfiles/filedetails/?id=\(id)"
         ]
@@ -149,7 +155,7 @@ enum SteamWorkshopAPI {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse,
               (200..<300).contains(http.statusCode) else {
-            throw DownloadError.resolverFailed
+            throw DownloadError.resolverHTTP((response as? HTTPURLResponse)?.statusCode ?? -1)
         }
 
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
