@@ -27,3 +27,12 @@ jobs:
           name: LumaForge-unsigned-ipa
           path: build/LumaForge-unsigned.ipa
           if-no-files-found: error
+
+  server-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate server Python
+        run: python3 -m py_compile server/lumaforge-server.py
+      - name: Build worker image
+        run: docker build -t lumaforge-worker:test .
