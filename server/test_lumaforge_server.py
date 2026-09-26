@@ -3,6 +3,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+import urllib.request
 import zipfile
 from pathlib import Path
 
@@ -25,6 +26,19 @@ class WorkerTests(unittest.TestCase):
             SERVER._validate_download_url("https://127.0.0.1/file")
         with self.assertRaisesRegex(RuntimeError, "unsafe URL"):
             SERVER._validate_download_url("https://169.254.169.254/latest/meta-data")
+
+    def test_redirect_handler_rejects_private_destination(self):
+        handler = SERVER.SafeRedirectHandler()
+        request = urllib.request.Request("https://example.com/file")
+        with self.assertRaisesRegex(RuntimeError, "unsafe URL"):
+            handler.redirect_request(
+                request,
+                None,
+                302,
+                "Found",
+                {},
+                "https://127.0.0.1/private",
+            )
 
     def test_workshop_id_validation(self):
         self.assertTrue(SERVER.ID_RE.fullmatch("3803559783"))
