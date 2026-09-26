@@ -1,9 +1,9 @@
 services:
   - type: web
-    name: lumaforge-steamcmd
+    name: lumaforge-worker
     runtime: docker
-    dockerfilePath: ./server/Dockerfile
-    dockerContext: ./server
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     plan: free
     healthCheckPath: /health
     autoDeploy: true
