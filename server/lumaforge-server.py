@@ -102,9 +102,17 @@ def _materialize_provider_file(downloaded, target):
         safe_extract_zip(downloaded, content)
         return content
 
-    suffix = Path(urlparse(downloaded.name).path).suffix.lower()
-    destination = content / ("workshop" + suffix if suffix else "workshop.pkg")
-    shutil.copy2(downloaded, destination)
+    data = downloaded.read_bytes()
+    if data.startswith(b"\\x89PNG\\r\\n\\x1a\\n"):
+        destination = content / "workshop.png"
+    elif data.startswith(b"\\xff\\xd8\\xff"):
+        destination = content / "workshop.jpg"
+    elif len(data) >= 12 and data[4:8] == b"ftyp":
+        destination = content / "workshop.mp4"
+    else:
+        suffix = Path(urlparse(downloaded.name).path).suffix.lower()
+        destination = content / ("workshop" + suffix if suffix else "workshop.pkg")
+    destination.write_bytes(data)
     return content
 
 
@@ -374,7 +382,7 @@ def locate_source(content, scratch):
         target.mkdir()
         try:
             with zipfile.ZipFile(z) as archive:
-                archive.extractall(target)
+                safe_extract_zip(archive, target)
             found = locate_source(target, scratch)
             if found:
                 return found
