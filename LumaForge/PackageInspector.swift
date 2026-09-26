@@ -1,5 +1,5 @@
 import Foundation
-import Compression
+import zlib
 
 struct PackageAsset: Identifiable, Hashable {
     let id = UUID()
@@ -96,12 +96,13 @@ enum PackageInspector {
     private static func mediaPriority(_ name: String) -> Int {
         let lower = name.lowercased()
         if lower.contains("project.json") { return 0 }
-        if lower.contains("preview") || lower.contains("thumbnail") { return 10 }
-        if lower.hasSuffix(".mp4") || lower.hasSuffix(".mov") || lower.hasSuffix(".m4v") { return 20 }
-        if lower.hasSuffix(".webm") { return 25 }
-        if lower.hasSuffix(".png") { return 30 }
-        if lower.hasSuffix(".jpg") || lower.hasSuffix(".jpeg") { return 35 }
-        return 50
+        if lower.hasSuffix(".mp4") || lower.hasSuffix(".mov") || lower.hasSuffix(".m4v") { return 10 }
+        if lower.hasSuffix(".webm") { return 15 }
+        if lower.hasSuffix(".png") { return 20 }
+        if lower.hasSuffix(".jpg") || lower.hasSuffix(".jpeg") { return 25 }
+        if lower.hasSuffix(".webp") || lower.hasSuffix(".gif") { return 30 }
+        if lower.contains("preview") || lower.contains("thumbnail") { return 80 }
+        return 90
     }
 
     private static func zipEntries(_ data: Data) throws -> [ZipEntry] {
@@ -179,72 +180,53 @@ enum PackageInspector {
         switch entry.method {
         case 0:
             return compressed
-
         case 8:
-            // ZIP uses raw DEFLATE. Compression's zlib decoder expects a
-            // zlib-wrapped stream, so wrap the raw payload with a header and
-            // Adler-32 checksum.
-            var wrapped = Data([0x78, 0x9C])
-            wrapped.append(compressed)
-            let checksum = adler32(compressed: try inflateRaw(compressed, expectedSize: entry.uncompressedSize))
-            wrapped.append(UInt8((checksum >> 24) & 0xFF))
-            wrapped.append(UInt8((checksum >> 16) & 0xFF))
-            wrapped.append(UInt8((checksum >> 8) & 0xFF))
-            wrapped.append(UInt8(checksum & 0xFF))
-
-            var output = Data(count: max(entry.uncompressedSize, 1))
-            let decoded = output.withUnsafeMutableBytes { dst in
-                wrapped.withUnsafeBytes { src in
-                    compression_decode_buffer(
-                        dst.bindMemory(to: UInt8.self).baseAddress!,
-                        output.count,
-                        src.bindMemory(to: UInt8.self).baseAddress!,
-                        wrapped.count,
-                        nil,
-                        COMPRESSION_ZLIB
-                    )
-                }
-            }
-            guard decoded > 0 else { throw ExportError.unsupported }
-            output.count = decoded
-            return output
-
+            return try inflateRaw(compressed, expectedSize: entry.uncompressedSize)
         default:
             throw ExportError.unsupported
         }
     }
 
     private static func inflateRaw(_ data: Data, expectedSize: Int) throws -> Data {
-        // First try a zlib-wrapped stream created from the raw DEFLATE bytes.
-        // This helper is only used to calculate the checksum, so use a
-        // progressively larger destination buffer when the exact size is
-        // unavailable.
-        var wrapped = Data([0x78, 0x9C])
-        wrapped.append(data)
-        wrapped.append(contentsOf: [0, 0, 0, 0])
+        var stream = z_stream()
+        var output = Data(count: max(expectedSize, 1))
 
-        var capacity = max(expectedSize, 1024)
-        for _ in 0..<5 {
-            var output = Data(count: capacity)
-            let decoded = output.withUnsafeMutableBytes { dst in
-                wrapped.withUnsafeBytes { src in
-                    compression_decode_buffer(
-                        dst.bindMemory(to: UInt8.self).baseAddress!,
-                        output.count,
-                        src.bindMemory(to: UInt8.self).baseAddress!,
-                        wrapped.count,
-                        nil,
-                        COMPRESSION_ZLIB
-                    )
+        let result: Int32 = data.withUnsafeBytes { source in
+            output.withUnsafeMutableBytes { destination in
+                guard let sourceBase = source.bindMemory(to: Bytef.self).baseAddress,
+                      let destinationBase = destination.bindMemory(to: Bytef.self).baseAddress else {
+                    return Z_STREAM_ERROR
                 }
+
+                stream.next_in = UnsafeMutablePointer<Bytef>(mutating: sourceBase)
+                stream.avail_in = uInt(data.count)
+                stream.next_out = destinationBase
+                stream.avail_out = uInt(output.count)
+
+                let initResult = inflateInit2_(
+                    &stream,
+                    -MAX_WBITS,
+                    ZLIB_VERSION,
+                    Int32(MemoryLayout<z_stream>.size)
+                )
+                guard initResult == Z_OK else { return initResult }
+
+                let inflateResult = inflate(&stream, Z_FINISH)
+                inflateEnd(&stream)
+
+                guard inflateResult == Z_STREAM_END else {
+                    return inflateResult
+                }
+
+                output.count = Int(stream.total_out)
+                return Z_OK
             }
-            if decoded > 0 {
-                output.count = decoded
-                return output
-            }
-            capacity *= 4
         }
-        throw ExportError.unsupported
+
+        guard result == Z_OK, !output.isEmpty else {
+            throw ExportError.unsupported
+        }
+        return output
     }
 
     private static func extractPNG(_ data: Data, bytes: [UInt8]) -> PackageAsset? {
