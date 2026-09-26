@@ -1,0 +1,24 @@
+name: AetherWall
+options:
+  bundleIdPrefix: com.itzprovenom
+  deploymentTarget:
+    iOS: "18.0"
+targets:
+  AetherWall:
+    type: application
+    platform: iOS
+    sources:
+      - path: FreshWallpaper/App
+      - path: FreshWallpaper/Models
+      - path: FreshWallpaper/Services
+      - path: FreshWallpaper/Views
+    resources:
+      - path: FreshWallpaper/Resources
+    info:
+      path: FreshWallpaper/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.itzprovenom.aetherwall
+        SWIFT_VERSION: 6.0
+        IPHONEOS_DEPLOYMENT_TARGET: 18.0
+        TARGETED_DEVICE_FAMILY: "1,2"

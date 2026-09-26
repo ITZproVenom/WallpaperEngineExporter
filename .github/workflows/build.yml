@@ -1,0 +1,22 @@
+name: AetherWall Build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install xcodegen
+        run: brew install xcodegen
+      - name: Generate project
+        run: xcodegen generate
+      - name: Build
+        run: xcodebuild -project AetherWall.xcodeproj -scheme AetherWall -sdk iphonesimulator -configuration Release -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - name: Package simulator app
+        run: ditto -c -k --sequesterRsrc --keepParent build/Build/Products/Release-iphonesimulator/AetherWall.app AetherWall-simulator.zip
+      - uses: actions/upload-artifact@v6
+        with:
+          name: AetherWall-simulator
+          path: AetherWall-simulator.zip

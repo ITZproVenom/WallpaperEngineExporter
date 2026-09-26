@@ -1,0 +1,2 @@
+// Xcode project generated for AetherWall
+// The CI workflow generates the project with xcodegen from project.yml.
