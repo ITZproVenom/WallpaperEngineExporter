@@ -64,7 +64,15 @@ def steamcmd_download(workshop_id, target):
     ], timeout=600)
     content = target / "steamapps" / "workshop" / "content" / APP_ID / workshop_id
     if not content.is_dir():
-        print(f"[lumaforge] SteamCMD produced no Workshop content for {workshop_id}: {output[-4000:]}", flush=True)
+        logs = []
+        for log_name in ("stderr.txt", "stdout.txt"):
+            log_path = Path.home() / "Steam" / "logs" / log_name
+            try:
+                logs.append(f"--- {log_name} ---\\n{log_path.read_text(errors=\"replace\")[-4000:]}")
+            except OSError:
+                pass
+        detail = "\\n".join(logs)
+        print(f"[lumaforge] SteamCMD produced no Workshop content for {workshop_id}: {detail or output[-4000:]}", flush=True)
         raise RuntimeError("SteamCMD returned no Workshop content")
     return content
 
