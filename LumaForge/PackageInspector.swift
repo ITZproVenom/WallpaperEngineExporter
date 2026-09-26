@@ -202,7 +202,7 @@ enum PackageInspector {
                 stream.next_in = UnsafeMutablePointer<Bytef>(mutating: sourceBase)
                 stream.avail_in = uInt(data.count)
                 stream.next_out = destinationBase
-                stream.avail_out = uInt(output.count)
+                stream.avail_out = uInt(destination.count)
 
                 let initResult = inflateInit2_(
                     &stream,
