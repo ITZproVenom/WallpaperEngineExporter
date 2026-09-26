@@ -12,15 +12,5 @@ struct ExportRecord: Identifiable, Codable, Hashable {
     let name: String
     let filename: String
     let createdAt: Date
-}
-
-enum ExportError: LocalizedError {
-    case unsupported
-    case failed
-    var errorDescription: String? {
-        switch self {
-        case .unsupported: "Unsupported Wallpaper Engine content."
-        case .failed: "The export failed."
-        }
-    }
+    let workshopID: String
 }
