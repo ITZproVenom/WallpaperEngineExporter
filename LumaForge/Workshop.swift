@@ -11,34 +11,23 @@ final class WorkshopStore: ObservableObject {
     private let appID = "431960"
 
     func search() async {
-        await fetch(url: workshopURL(query: query))
+        loading = true
+        error = nil
+        defer { loading = false }
+
+        do {
+            items = try await SteamWorkshopWebScraper.loadItems(url: workshopURL(query: query))
+            if items.isEmpty {
+                error = "Steam returned no Workshop items for this search."
+            }
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 
     func setSubscribed(_ items: [WorkshopItem]) {
         self.items = items
-        if items.isEmpty {
-            error = "No subscribed Wallpaper Engine items were found."
-        }
-    }
-
-    private func fetch(url: URL) async {
-        loading = true
-        defer { loading = false }
-        do {
-            var request = URLRequest(url: url)
-            request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                throw WorkshopError.http
-            }
-            let html = String(decoding: data, as: UTF8.self)
-            guard !html.contains("Please log in") else { throw WorkshopError.loginRequired }
-            let parsed = parse(html)
-            items = parsed
-            if parsed.isEmpty { throw WorkshopError.noItems }
-        } catch {
-            self.error = error.localizedDescription
-        }
+        error = items.isEmpty ? "No subscribed Wallpaper Engine items were found. Sign in to Steam in the subscription page first." : nil
     }
 
     private func workshopURL(query: String) -> URL {
@@ -53,57 +42,117 @@ final class WorkshopStore: ObservableObject {
         }
         return c.url!
     }
+}
 
-    private func parse(_ html: String) -> [WorkshopItem] {
-        guard let re = try? NSRegularExpression(
-            pattern: #"<a[^>]+href="([^"]*sharedfiles/filedetails/\?id=(\d+)[^"]*)"[^>]*>(.*?)</a>"#,
-            options: [.caseInsensitive, .dotMatchesLineSeparators]
-        ) else { return [] }
+@MainActor
+final class SteamWorkshopWebScraper: NSObject, WKNavigationDelegate {
+    private static var active: SteamWorkshopWebScraper?
 
-        var out: [WorkshopItem] = []
-        var seen = Set<String>()
+    private let webView: WKWebView
+    private var continuation: CheckedContinuation<[WorkshopItem], Error>?
+    private var finished = false
 
-        for m in re.matches(in: html, range: NSRange(html.startIndex..., in: html)) {
-            guard let ir = Range(m.range(at: 2), in: html),
-                  let hr = Range(m.range(at: 1), in: html),
-                  let tr = Range(m.range(at: 3), in: html) else { continue }
+    private init(url: URL) {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .default
+        webView = WKWebView(frame: .zero, configuration: configuration)
+        super.init()
+        webView.navigationDelegate = self
+        webView.load(URLRequest(url: url))
+    }
 
-            let id = String(html[ir])
-            guard seen.insert(id).inserted else { continue }
+    static func loadItems(url: URL) async throws -> [WorkshopItem] {
+        let scraper = SteamWorkshopWebScraper(url: url)
+        active = scraper
 
-            let raw = String(html[hr]).replacingOccurrences(of: "&amp;", with: "&")
-            guard let page = URL(string: raw.hasPrefix("http") ? raw : "https://steamcommunity.com\(raw)") else { continue }
-
-            let title = String(html[tr])
-                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-
-            let ns = html as NSString
-            let start = max(0, m.range.location - 1500)
-            let window = ns.substring(with: NSRange(
-                location: start,
-                length: min(ns.length - start, m.range.length + 2800)
-            ))
-            let p = try? NSRegularExpression(
-                pattern: #"https?://[^"' ]+\.(?:jpg|jpeg|png|webp)"#,
-                options: .caseInsensitive
-            )
-            let preview = p?
-                .firstMatch(in: window, range: NSRange(window.startIndex..., in: window))
-                .flatMap { Range($0.range, in: window) }
-                .flatMap { URL(string: String(window[$0]).replacingOccurrences(of: "&amp;", with: "&")) }
-
-            out.append(.init(
-                id: id,
-                title: title.isEmpty ? "Untitled" : title,
-                previewURL: preview,
-                pageURL: page
-            ))
-
-            if out.count == 50 { break }
+        return try await withCheckedThrowingContinuation { continuation in
+            scraper.continuation = continuation
         }
+    }
 
-        return out
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        finish(.failure(error))
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        finish(.failure(error))
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        let script = """
+        (() => {
+            const anchors = Array.from(document.querySelectorAll('a[href*="sharedfiles/filedetails/?id="]'));
+            const seen = new Set();
+            return anchors.map(a => {
+                let href = a.href || '';
+                let id = '';
+                try { id = new URL(href).searchParams.get('id') || ''; } catch (_) {}
+                const container = a.closest('.workshopItem, .workshopItemSubscription, .workshopItemPreview, .item') || a;
+                const image = a.querySelector('img') || container.querySelector('img');
+                const titleNode =
+                    a.querySelector('.workshopItemTitle') ||
+                    container.querySelector('.workshopItemTitle') ||
+                    container.querySelector('.workshopItemTitle a') ||
+                    a;
+                return {
+                    id,
+                    title: (titleNode?.textContent || '').trim(),
+                    href,
+                    preview: image?.src || ''
+                };
+            }).filter(x => /^\\d+$/.test(x.id) && !seen.has(x.id) && (seen.add(x.id), true)).slice(0, 50);
+        })()
+        """
+
+        webView.evaluateJavaScript(script) { [weak self] result, error in
+            guard let self else { return }
+            if let error {
+                self.finish(.failure(error))
+                return
+            }
+
+            guard let raw = result as? [[String: Any]] else {
+                self.finish(.success([]))
+                return
+            }
+
+            var items: [WorkshopItem] = []
+            var seen = Set<String>()
+
+            for value in raw {
+                guard let id = value["id"] as? String,
+                      let href = value["href"] as? String,
+                      let pageURL = URL(string: href),
+                      seen.insert(id).inserted else { continue }
+
+                let title = (value["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let previewURL = (value["preview"] as? String).flatMap(URL.init(string))
+
+                items.append(.init(
+                    id: id,
+                    title: title?.isEmpty == false ? title! : "Untitled",
+                    previewURL: previewURL,
+                    pageURL: pageURL
+                ))
+            }
+
+            self.finish(.success(items))
+        }
+    }
+
+    private func finish(_ result: Result<[WorkshopItem], Error>) {
+        guard !finished else { return }
+        finished = true
+        let continuation = continuation
+        self.continuation = nil
+        Self.active = nil
+
+        switch result {
+        case .success(let items):
+            continuation?.resume(returning: items)
+        case .failure(let error):
+            continuation?.resume(throwing: error)
+        }
     }
 }
 
@@ -117,7 +166,7 @@ struct SteamSubscriptionsView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
+        configuration.websiteDataStore = .default
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
@@ -152,22 +201,22 @@ struct SteamSubscriptionsView: UIViewRepresentable {
 
             let script = """
             (() => {
-                const nodes = Array.from(document.querySelectorAll('[id^="Subscription"]'));
-                const source = nodes.length ? nodes : Array.from(document.querySelectorAll('.workshopItemSubscriptionDetails'));
-                const items = source.map(node => {
-                    const titleNode = node.querySelector('.workshopItemTitle');
-                    const linkNode = titleNode?.closest('a') || node.querySelector('a[href*="filedetails/?id="]');
-                    const imageNode = node.querySelector('img.workshopItemPreviewImage');
-                    const href = linkNode?.href || '';
-                    const id = new URL(href).searchParams.get('id') || '';
+                const anchors = Array.from(document.querySelectorAll('a[href*="sharedfiles/filedetails/?id="]'));
+                const seen = new Set();
+                return anchors.map(a => {
+                    let href = a.href || '';
+                    let id = '';
+                    try { id = new URL(href).searchParams.get('id') || ''; } catch (_) {}
+                    const container = a.closest('.workshopItem, .workshopItemSubscription, .workshopItemPreview, .item') || a;
+                    const titleNode = a.querySelector('.workshopItemTitle') || container.querySelector('.workshopItemTitle') || a;
+                    const image = a.querySelector('img') || container.querySelector('img');
                     return {
-                        id: id,
+                        id,
                         title: (titleNode?.textContent || '').trim(),
-                        href: href,
-                        preview: imageNode?.src || ''
+                        href,
+                        preview: image?.src || ''
                     };
-                }).filter(item => /^\\d+$/.test(item.id));
-                return items;
+                }).filter(x => /^\\d+$/.test(x.id) && !seen.has(x.id) && (seen.add(x.id), true)).slice(0, 100);
             })()
             """
 
@@ -186,7 +235,7 @@ struct SteamSubscriptionsView: UIViewRepresentable {
                           seen.insert(id).inserted else { continue }
 
                     let title = (value["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let preview = (value["preview"] as? String).flatMap(URL.init(string:))
+                    let preview = (value["preview"] as? String).flatMap(URL.init(string))
 
                     items.append(.init(
                         id: id,
@@ -214,7 +263,7 @@ enum WorkshopError: LocalizedError {
         case .loginRequired:
             "Steam requires an authenticated Workshop session to show subscriptions."
         case .noItems:
-            "No Workshop items were found."
+            "Steam returned no Workshop items."
         }
     }
 }
