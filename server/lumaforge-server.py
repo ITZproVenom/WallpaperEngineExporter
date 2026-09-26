@@ -57,7 +57,7 @@ def run(cmd, timeout=600):
 
 
 def resolver_download(workshop_id, target):
-    api = os.getenv("WORKSHOP_RESOLVER_API", "https://api_01.steamworkshopdownloader.io/api").rstrip("/")
+    api = os.getenv("WORKSHOP_RESOLVER_API", "https://steamworkshopdownloader.io/api").rstrip("/")
     request_body = json.dumps({
         "publishedFileId": int(workshop_id),
         "collectionId": None,
