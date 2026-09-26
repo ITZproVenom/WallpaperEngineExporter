@@ -47,6 +47,11 @@ final class DownloadManager: ObservableObject {
                 if downloadedURL != nil { return }
             }
 
+            if let ggURL = try await SteamWorkshopAPI.ggNetworkDownloadURL(for: id) {
+                await downloadURL(ggURL, alreadyMarked: true)
+                if downloadedURL != nil { return }
+            }
+
             let resolved = try await SteamWorkshopAPI.resolvedDownloadURL(for: id)
             await downloadURL(resolved, alreadyMarked: true)
         } catch {
@@ -309,6 +314,60 @@ enum SteamWorkshopAPI {
             return nil
         }
         return URL(string: value)
+    }
+
+    static func ggNetworkDownloadURL(for id: String) async throws -> URL? {
+        let workshopURL = "https://steamcommunity.com/sharedfiles/filedetails/?id=" + id
+        var request = URLRequest(url: URL(string: "https://api.ggntw.com/steam.request")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
+        request.setValue("https://ggntw.com", forHTTPHeaderField: "Origin")
+        request.setValue("https://ggntw.com/", forHTTPHeaderField: "Referer")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["url": workshopURL])
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            return nil
+        }
+
+        guard let object = try? JSONSerialization.jsonObject(with: data) else {
+            return nil
+        }
+
+        func findURL(_ value: Any) -> URL? {
+            if let string = value as? String,
+               let url = URL(string: string),
+               let scheme = url.scheme?.lowercased(),
+               scheme == "http" || scheme == "https" {
+                return url
+            }
+
+            if let dictionary = value as? [String: Any] {
+                for key in ["download_url", "downloadUrl", "url", "link", "file", "download", "href"] {
+                    if let child = dictionary[key], let url = findURL(child) {
+                        return url
+                    }
+                }
+                for child in dictionary.values {
+                    if let url = findURL(child) {
+                        return url
+                    }
+                }
+            }
+
+            if let array = value as? [Any] {
+                for child in array {
+                    if let url = findURL(child) {
+                        return url
+                    }
+                }
+            }
+
+            return nil
+        }
+
+        return findURL(object)
     }
 
     static func resolvedDownloadURL(for id: String) async throws -> URL {
