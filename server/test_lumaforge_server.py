@@ -16,6 +16,16 @@ SPEC.loader.exec_module(SERVER)
 
 
 class WorkerTests(unittest.TestCase):
+    def test_download_url_rejects_plain_http(self):
+        with self.assertRaisesRegex(RuntimeError, "non-HTTPS"):
+            SERVER._validate_download_url("http://example.com/file")
+
+    def test_download_url_rejects_private_ip(self):
+        with self.assertRaisesRegex(RuntimeError, "unsafe URL"):
+            SERVER._validate_download_url("https://127.0.0.1/file")
+        with self.assertRaisesRegex(RuntimeError, "unsafe URL"):
+            SERVER._validate_download_url("https://169.254.169.254/latest/meta-data")
+
     def test_workshop_id_validation(self):
         self.assertTrue(SERVER.ID_RE.fullmatch("3803559783"))
         self.assertFalse(SERVER.ID_RE.fullmatch("12345"))
