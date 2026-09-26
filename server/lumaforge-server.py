@@ -25,6 +25,7 @@ STEAMCMD = os.getenv("STEAMCMD", "/opt/steamcmd/steamcmd.sh")
 ROOT = Path(os.getenv("WORK_ROOT", "/tmp/lumaforge"))
 MAX_AGE = int(os.getenv("WORK_MAX_AGE", "3600"))
 MAX_JOBS = int(os.getenv("MAX_JOBS", "1"))
+MAX_MEMORY_JOBS = int(os.getenv("MAX_MEMORY_JOBS", "100"))
 WORKSHOP_PROVIDER = os.getenv("WORKSHOP_PROVIDER", "supabase,swdl,ggnetwork,steamcmd").strip().lower()
 GGNETWORK_ENDPOINT = os.getenv("GGNETWORK_ENDPOINT", "https://api.ggntw.com/steam.request")
 SWDL_ENDPOINTS = [u.strip().rstrip("/") for u in os.getenv("SWDL_ENDPOINTS", "https://node03.steamworkshopdownloader.io/prod/api/download,https://backend-01-prd.steamworkshopdownloader.io/api/download,https://api.steamworkshopdownloader.io/api/download").split(",") if u.strip()]
@@ -49,8 +50,20 @@ def set_job(job_id, **values):
 
 def cleanup():
     cutoff = time.time() - MAX_AGE
+    active_ids = set()
+    with jobs_lock:
+        for job_id, job in list(jobs.items()):
+            status = job.get("status")
+            created_at = int(job.get("created_at", 0))
+            if status in {"queued", "downloading", "converting"}:
+                active_ids.add(job_id)
+            elif created_at and created_at < cutoff:
+                jobs.pop(job_id, None)
+
     for p in list(ROOT.iterdir()):
         try:
+            if p.name.startswith("job-") and p.name[4:] in active_ids:
+                continue
             if p.stat().st_mtime < cutoff:
                 if p.is_dir():
                     shutil.rmtree(p, ignore_errors=True)
@@ -302,7 +315,8 @@ def acquire_workshop(workshop_id, target):
 def ffmpeg_image_to_mp4(image, output):
     run([
         "ffmpeg", "-y", "-loop", "1", "-i", str(image),
-        "-t", "3", "-r", "30", "-vf", "format=yuv420p",
+        "-t", "3", "-r", "30",
+        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
         "-movflags", "+faststart", str(output)
     ], timeout=180)
@@ -311,7 +325,7 @@ def ffmpeg_image_to_mp4(image, output):
 def ffmpeg_gif_to_mp4(source, output):
     run([
         "ffmpeg", "-y", "-i", str(source),
-        "-vf", "fps=30,format=yuv420p",
+        "-vf", "fps=30,scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
         "-movflags", "+faststart", str(output)
     ], timeout=900)
@@ -320,9 +334,11 @@ def ffmpeg_gif_to_mp4(source, output):
 def ffmpeg_video_to_mp4(source, output):
     run([
         "ffmpeg", "-y", "-i", str(source),
+        "-map", "0:v:0", "-map", "0:a?",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-        "-pix_fmt", "yuv420p", "-movflags", "+faststart",
-        "-an", str(output)
+        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart", str(output)
     ], timeout=900)
 
 
