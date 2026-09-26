@@ -510,7 +510,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/v1/auth/steam/callback":
             query = parsed.query
             if not query:
-                return self.send_response(400) or None
+                return self.json(400, {"error": "Missing Steam OpenID callback parameters"})
             location = "lumaforge://steam-callback?" + query
             self.send_response(302)
             self.send_header("Location", location)
