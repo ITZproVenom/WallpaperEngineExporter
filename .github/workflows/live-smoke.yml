@@ -83,3 +83,5 @@ jobs:
 # live worker verification
 
 # rerun after SteamCMD ordering fix
+
+# test server-side resolver fallback
