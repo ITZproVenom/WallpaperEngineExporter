@@ -7,11 +7,22 @@ permissions:
   contents: write
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - name: Create GitHub release
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.0.app
+      - name: Build archive
+        run: |
+          xcodebuild -project LumaForge.xcodeproj -scheme LumaForge -sdk iphoneos -configuration Release -archivePath build/LumaForge.xcarchive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO archive
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p build/Payload
+          cp -R build/LumaForge.xcarchive/Products/Applications/LumaForge.app build/Payload/
+          cd build
+          zip -qry LumaForge-unsigned.ipa Payload
+      - name: Upload IPA to release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create v1.0.0             --target main             --title "LumaForge v1.0.0"             --notes "Clean-room LumaForge rebuild. Includes Steam OpenID authentication, Workshop discovery, local package inspection, and MP4 export pipeline."             --latest
+          gh release upload v1.0.0 build/LumaForge-unsigned.ipa --clobber
