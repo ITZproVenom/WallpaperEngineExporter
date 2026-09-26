@@ -43,7 +43,8 @@ enum ExportHistoryStore {
         try? fm.removeItem(at: destination)
         try fm.moveItem(at: tempURL, to: destination)
 
-        let attributes = try? fm.attributesOfItem(atPath: destination.path)\n        let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+        let attributes = try? fm.attributesOfItem(atPath: destination.path)
+        let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
         let record = ExportRecord(
             id: UUID(),
             title: title,
