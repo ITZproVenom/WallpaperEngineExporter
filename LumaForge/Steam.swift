@@ -125,14 +125,18 @@ final class SteamSession: NSObject, ObservableObject, ASWebAuthenticationPresent
 
     private func verify(_ callback: URL) async throws -> Bool {
         guard var components = URLComponents(url: callback, resolvingAgainstBaseURL: false) else { return false }
-        var query = components.queryItems ?? []
-        query.removeAll { $0.name == "openid.mode" }
-        query.append(.init(name: "openid.mode", value: "check_authentication"))
-        components.queryItems = query
+        let query = (components.queryItems ?? []).filter { $0.name.hasPrefix("openid.") }
+        let verificationItems = query.map { item -> URLQueryItem in
+            if item.name == "openid.mode" {
+                return URLQueryItem(name: item.name, value: "check_authentication")
+            }
+            return item
+        }
+        components.queryItems = verificationItems
 
         var request = URLRequest(url: URL(string: SteamOpenID.endpoint)!)
         request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
         request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
 
         let (data, response) = try await URLSession.shared.data(for: request)
