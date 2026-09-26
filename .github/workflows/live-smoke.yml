@@ -1,0 +1,81 @@
+name: Live LumaForge Smoke Test
+
+on:
+  push:
+    paths:
+      - ".github/workflows/live-smoke.yml"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for worker health
+        run: |
+          set -e
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 10 https://lumaforge-worker.onrender.com/health; then
+              echo
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Worker health endpoint did not become ready"
+          exit 1
+
+      - name: Create conversion job
+        run: |
+          set -e
+          curl -fsS --max-time 20 \
+            -X POST \
+            -H 'Content-Type: application/json' \
+            -d '{"workshop_id":"3556794116"}' \
+            https://lumaforge-worker.onrender.com/v1/jobs > job.json
+          cat job.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open("job.json"))
+          assert d.get("job_id"), d
+          PY
+
+      - name: Poll conversion
+        run: |
+          set -e
+          JOB_ID=$(python3 -c 'import json; print(json.load(open("job.json"))["job_id"])')
+          for i in $(seq 1 180); do
+            curl -fsS --max-time 20 "https://lumaforge-worker.onrender.com/v1/jobs/$JOB_ID" > status.json
+            cat status.json
+            STATE=$(python3 -c 'import json; print(json.load(open("status.json")).get("status"))')
+            if [ "$STATE" = "completed" ]; then
+              python3 - <<'PY'
+          import json
+          d=json.load(open("status.json"))
+          assert d.get("filename","").lower().endswith(".mp4"), d
+          assert d.get("file_url"), d
+          PY
+              exit 0
+            fi
+            if [ "$STATE" = "failed" ]; then
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "Conversion timed out"
+          exit 1
+
+      - name: Verify MP4 endpoint
+        run: |
+          set -e
+          JOB_ID=$(python3 -c 'import json; print(json.load(open("job.json"))["job_id"])')
+          FILE=$(python3 -c 'import json; print(json.load(open("status.json"))["filename"])')
+          curl -fsS --max-time 60 -D headers.txt -o output.mp4 "https://lumaforge-worker.onrender.com/v1/files/$FILE"
+          grep -qi '^Content-Type: video/mp4' headers.txt
+          test -s output.mp4
+          file output.mp4
+
+      - name: Delete job
+        if: always()
+        run: |
+          if [ -f job.json ]; then
+            JOB_ID=$(python3 -c 'import json; print(json.load(open("job.json"))["job_id"])')
+            curl -fsS --max-time 20 -X DELETE "https://lumaforge-worker.onrender.com/v1/jobs/$JOB_ID" || true
+          fi
