@@ -318,12 +318,34 @@ enum SteamWorkshopAPI {
 
     static func ggNetworkDownloadURL(for id: String) async throws -> URL? {
         let workshopURL = "https://steamcommunity.com/sharedfiles/filedetails/?id=" + id
+        let ggPageURL = URL(string: "https://ggntw.com/steam/" + id)!
+        let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+
+        // GGNetwork's web client establishes a session before calling the API.
+        // Do the same so Cloudflare/session cookies are available to the API request.
+        var warmup = URLRequest(url: ggPageURL)
+        warmup.httpMethod = "GET"
+        warmup.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        warmup.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        warmup.setValue("https://ggntw.com/", forHTTPHeaderField: "Referer")
+        _ = try? await URLSession.shared.data(for: warmup)
+
         var request = URLRequest(url: URL(string: "https://api.ggntw.com/steam.request")!)
         request.httpMethod = "POST"
+        request.timeoutInterval = 60
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("https://ggntw.com", forHTTPHeaderField: "Origin")
-        request.setValue("https://ggntw.com/", forHTTPHeaderField: "Referer")
+        request.setValue(ggPageURL.absoluteString, forHTTPHeaderField: "Referer")
+
+        if let cookies = HTTPCookieStorage.shared.cookies(for: ggPageURL), !cookies.isEmpty {
+            let header = cookies
+                .map { $0.name + "=" + $0.value }
+                .joined(separator: "; ")
+            request.setValue(header, forHTTPHeaderField: "Cookie")
+        }
+
         request.httpBody = try JSONSerialization.data(withJSONObject: ["url": workshopURL])
 
         let (data, response) = try await URLSession.shared.data(for: request)
