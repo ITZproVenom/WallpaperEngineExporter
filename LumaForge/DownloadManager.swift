@@ -47,6 +47,11 @@ final class DownloadManager: ObservableObject {
                 if downloadedURL != nil { return }
             }
 
+            if let swdURL = try await SteamWorkshopAPI.steamWorkshopDownloaderURL(for: id) {
+                await downloadURL(swdURL, alreadyMarked: true)
+                if downloadedURL != nil { return }
+            }
+
             if let ggURL = try await SteamWorkshopAPI.ggNetworkDownloadURL(for: id) {
                 await downloadURL(ggURL, alreadyMarked: true)
                 if downloadedURL != nil { return }
