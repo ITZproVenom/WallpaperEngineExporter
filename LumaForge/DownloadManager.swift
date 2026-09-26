@@ -16,8 +16,8 @@ final class DownloadManager: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let url = URL(string: trimmed), let id = Self.workshopID(from: url) {
             Task { await downloadWorkshopItem(id: id) }
-        } else if let id = Self.workshopID(from: trimmed) {
-            Task { await downloadWorkshopItem(id: id) }
+        } else if trimmed.count >= 6 && trimmed.count <= 20 && trimmed.allSatisfy(\.isNumber) {
+            Task { await downloadWorkshopItem(id: trimmed) }
         } else {
             error = "Paste a valid Steam Workshop link or Workshop ID."
         }
