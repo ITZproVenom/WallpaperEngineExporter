@@ -75,7 +75,12 @@ final class DownloadManager: ObservableObject {
         let (data, response) = try await URLSession.shared.data(for: request)
         try validate(response, data: data)
 
-        let job = try JSONDecoder().decode(CreateJobResponse.self, from: data)
+        let job: CreateJobResponse
+        do {
+            job = try JSONDecoder().decode(CreateJobResponse.self, from: data)
+        } catch {
+            throw DownloadError.serverMessage("Invalid job response from LumaForge: \(error.localizedDescription)")
+        }
         guard !job.jobID.isEmpty else {
             throw DownloadError.serverMessage("The server did not return a job ID.")
         }
@@ -105,6 +110,7 @@ final class DownloadManager: ObservableObject {
                 status = "Downloading finished MP4…"
                 let url = try await downloadFinalMP4(jobID: jobID, filename: filename)
                 downloadedURL = url
+                try? await deleteJob(jobID: jobID)
                 progress = 1
                 status = "Completed"
                 return
@@ -132,7 +138,27 @@ final class DownloadManager: ObservableObject {
 
         let (data, response) = try await URLSession.shared.data(for: request)
         try validate(response, data: data)
-        return try JSONDecoder().decode(JobResponse.self, from: data)
+        do {
+            let job = try JSONDecoder().decode(JobResponse.self, from: data)
+            guard job.jobID == jobID else {
+                throw DownloadError.serverMessage("The LumaForge server returned the wrong job.")
+            }
+            return job
+        } catch let error as DownloadError {
+            throw error
+        } catch {
+            throw DownloadError.serverMessage("Invalid job status response from LumaForge: \(error.localizedDescription)")
+        }
+    }
+
+    private func deleteJob(jobID: String) async throws {
+        let url = Self.serverURL
+            .appendingPathComponent("v1/jobs")
+            .appendingPathComponent(jobID)
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        _ = try await URLSession.shared.data(for: request)
     }
 
     private func downloadFinalMP4(jobID: String, filename: String) async throws -> URL {
@@ -147,6 +173,9 @@ final class DownloadManager: ObservableObject {
         let (temporaryURL, response) = try await URLSession.shared.download(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw DownloadError.httpStatus((response as? HTTPURLResponse)?.statusCode ?? -1)
+        }
+        guard http.value(forHTTPHeaderField: "Content-Type")?.lowercased().hasPrefix("video/mp4") == true else {
+            throw DownloadError.serverMessage("The server returned a non-MP4 response.")
         }
 
         let destination = FileManager.default.temporaryDirectory
