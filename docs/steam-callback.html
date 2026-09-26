@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LumaForge Steam Sign-In</title>
+</head>
+<body>
+<p>Returning to LumaForge…</p>
+<script>
+(function () {
+  const target = "lumaforge://steam-callback" + window.location.search;
+  window.location.replace(target);
+})();
+</script>
+<noscript>
+  <p>JavaScript is required to return to LumaForge.</p>
+  <a id="fallback" href="#">Continue to LumaForge</a>
+  <script>
+    document.getElementById("fallback").href =
+      "lumaforge://steam-callback" + window.location.search;
+  </script>
+</noscript>
+</body>
+</html>
