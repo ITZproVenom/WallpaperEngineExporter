@@ -42,27 +42,22 @@ final class DownloadManager: ObservableObject {
         defer { downloading = false }
 
         do {
-            // Use SteamWorkshopDownloader.io first. Its backend requests the
-            // Workshop item through Steam's content service, waits for the
-            // download job to be prepared, then exposes the generated archive.
             if let url = try await SteamWorkshopAPI.steamWorkshopDownloaderURL(for: id) {
                 await downloadURL(url, alreadyMarked: true)
                 if downloadedURL != nil { return }
             }
 
-            // Existing server-side resolver remains a fallback.
             if let resolved = try? await SteamWorkshopAPI.resolvedDownloadURL(for: id) {
                 await downloadURL(resolved, alreadyMarked: true)
                 if downloadedURL != nil { return }
             }
 
-            // Public Steam file_url remains a final fallback.
             if let url = try await SteamWorkshopAPI.fileURL(for: id) {
                 await downloadURL(url, alreadyMarked: true)
                 if downloadedURL != nil { return }
             }
 
-            throw DownloadError.resolverFailed
+            throw DownloadError.noValidWorkshopFile
         } catch {
             self.error = error.localizedDescription
         }
@@ -113,6 +108,11 @@ final class DownloadManager: ObservableObject {
                 return
             }
 
+            if Self.looksLikeTextResponse(response: http, fileURL: temporaryURL) {
+                try? FileManager.default.removeItem(at: temporaryURL)
+                throw DownloadError.nonFileResponse
+            }
+
             let filename = Self.filename(
                 response: http,
                 fallback: url.lastPathComponent.isEmpty ? "wallpaper.download" : url.lastPathComponent
@@ -143,7 +143,7 @@ final class DownloadManager: ObservableObject {
         guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return false }
         defer { try? handle.close() }
 
-        guard let data = try? handle.read(upToCount: 2048),
+        guard let data = try? handle.read(upToCount: 4096),
               let text = String(data: data, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased() else {
@@ -156,6 +156,48 @@ final class DownloadManager: ObservableObject {
                text.hasPrefix("<body") ||
                text.contains("<html") ||
                text.contains("<!doctype html")
+    }
+
+    static func looksLikeTextResponse(response: HTTPURLResponse, fileURL: URL) -> Bool {
+        if let type = response.mimeType?.lowercased() {
+            let textTypes = [
+                "text/css", "text/plain", "text/javascript", "application/javascript",
+                "application/json", "application/xml", "text/xml", "text/event-stream"
+            ]
+            if textTypes.contains(where: { type.contains($0) }) {
+                return true
+            }
+        }
+
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return false }
+        defer { try? handle.close() }
+
+        guard let data = try? handle.read(upToCount: 4096), !data.isEmpty else { return false }
+
+        // A real Workshop archive/package/media file should not be accepted
+        // merely because the server omitted a useful Content-Type.
+        let bytes = [UInt8](data)
+        if bytes.starts(with: [0x50, 0x4B, 0x03, 0x04]) || // ZIP
+           bytes.starts(with: [0x50, 0x4B, 0x05, 0x06]) ||
+           bytes.starts(with: [0x50, 0x4B, 0x07, 0x08]) ||
+           bytes.starts(with: [0x50, 0x4B, 0x47, 0x56]) || // PKGV
+           bytes.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) || // PNG
+           bytes.starts(with: [0xFF, 0xD8, 0xFF]) || // JPEG
+           bytes.starts(with: [0x1A, 0x45, 0xDF, 0xA3]) { // EBML/WebM
+            return false
+        }
+
+        guard let text = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() else {
+            return false
+        }
+
+        let textMarkers = [
+            "{", "[", "<html", "<!doctype", "<style", "<script",
+            "body {", "html {", "const ", "function ", "var "
+        ]
+        return textMarkers.contains(where: { text.hasPrefix($0) || text.contains($0) })
     }
 
     static func extractDownloadCandidates(from html: String, baseURL: URL) -> [URL] {
@@ -207,7 +249,7 @@ final class DownloadManager: ObservableObject {
             }
         }
 
-        let absolutePattern = #"https?://[^"'<>\s]+"#
+        let absolutePattern = #"https?://[^"'<>s]+"#
         if let regex = try? NSRegularExpression(pattern: absolutePattern, options: [.caseInsensitive]) {
             let range = NSRange(html.startIndex..<html.endIndex, in: html)
             for match in regex.matches(in: html, range: range) {
@@ -260,6 +302,8 @@ enum DownloadError: LocalizedError {
     case htmlWithoutDownload
     case tooManyRedirectPages
     case redirectLoop
+    case nonFileResponse
+    case noValidWorkshopFile
 
     var errorDescription: String? {
         switch self {
@@ -279,6 +323,10 @@ enum DownloadError: LocalizedError {
             return "The Workshop downloader returned too many intermediate webpages."
         case .redirectLoop:
             return "The Workshop downloader entered a redirect loop."
+        case .nonFileResponse:
+            return "The Workshop provider returned text instead of a Workshop file."
+        case .noValidWorkshopFile:
+            return "No valid Workshop file was returned by the available download providers."
         }
     }
 }
