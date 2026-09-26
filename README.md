@@ -31,3 +31,6 @@ The production worker is deployed from the repository root `Dockerfile`. The iOS
 Xcode 26, iOS 18+, unsigned IPA in CI.
 
 The CI pipeline validates the Python worker and builds the Docker image in addition to building the iOS archive.
+
+
+<!-- CI verification: server-side Workshop acquisition cascade -->
