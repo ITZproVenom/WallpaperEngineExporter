@@ -19,6 +19,10 @@ jobs:
       - name: Build archive
         run: |
           xcodebuild -project LumaForge.xcodeproj -scheme LumaForge -sdk iphoneos -configuration Release -archivePath build/LumaForge.xcarchive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO archive
+      - name: Run unit tests
+        run: |
+          xcodebuild test -project LumaForge.xcodeproj -scheme LumaForge -sdk iphonesimulator -destination 'platform=iOS Simulator,OS=latest,name=iPhone 17' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+
       - name: Package unsigned IPA
         run: |
           mkdir -p build/Payload
@@ -62,6 +66,10 @@ jobs:
           test -n "$JOB_ID"
           curl -fsS "http://127.0.0.1:18080/v1/jobs/$JOB_ID" >"$ROOT/job.json"
           python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["job_id"]; assert x["status"] in {"queued","downloading","converting","failed","completed"}' <"$ROOT/job.json"
+          CALLBACK="$(curl -fsS -D - -o /dev/null 'http://127.0.0.1:18080/v1/auth/steam/callback?state=ci-test&openid.mode=id_res')"
+          grep -i '^Location: lumaforge://steam-callback?state=ci-test&openid.mode=id_res' <<<"$CALLBACK"
+          test ! -d .github/workflows/release.yml
+          ! grep -R "fswswvhpszebuxnloysy" LumaForge server render.yaml --include='*.swift' --include='*.py' --include='*.yaml' 2>/dev/null
       - name: Build worker image
         run: docker build -t lumaforge-worker:test .
       - name: Verify thin-client boundary
