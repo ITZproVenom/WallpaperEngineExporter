@@ -5,6 +5,10 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-15
@@ -45,3 +49,22 @@ jobs:
       - name: Verify thin-client boundary
         run: |
           ! grep -R "AVFoundation\|AVAssetExportSession\|PackageInspector" LumaForge --include='*.swift'
+
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build, server-check]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download IPA artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: LumaForge-unsigned-ipa
+          path: release
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: lumaforge-build-${{ github.run_number }}
+          name: LumaForge Build ${{ github.run_number }}
+          generate_release_notes: true
+          files: release/LumaForge-unsigned.ipa
