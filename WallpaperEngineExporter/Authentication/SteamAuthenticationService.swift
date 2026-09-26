@@ -87,12 +87,10 @@ final class SteamAuthenticationService: NSObject, ObservableObject {
         }
         isLoading = true
 
-        if Self.prefersWebViewAuth {
-            showLoginWebView = true
-            return
-        }
-
-        startASWebAuthenticationSession(fallbackToWebViewOnFailure: true)
+        // Steam returns to the HTTPS relay page. The embedded WebView intercepts
+        // that navigation before the relay page loads, so the signed OpenID
+        // response is delivered deterministically on iOS.
+        showLoginWebView = true
     }
 
     /// Explicit WKWebView path (also used after ASWeb failure).
