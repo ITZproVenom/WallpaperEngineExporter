@@ -207,21 +207,28 @@ struct BinaryAsset {
 }
 struct BinaryAssetScanner {
     static func scan(_ data:Data)->[BinaryAsset] {
-        var out:[BinaryAsset]=[]
         let bytes=[UInt8](data)
-        func append(_ kind:BinaryAssetKind,_ index:Int) {
-            guard index < bytes.count else { return }
-            out.append(BinaryAsset(kind:kind,data:data.subdata(in:index..<bytes.count)))
+        var ranges:[(Int,BinaryAssetKind)]=[]
+        if bytes.count >= 8 {
+            for i in 0...(bytes.count-8) where Array(bytes[i..<i+8]) == [0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A] { ranges.append((i,.png)) }
         }
-        if let i=bytes.firstIndex(of:0x89), i+8<=bytes.count, Array(bytes[i..<i+8]) == [0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A] { append(.png,i) }
-        if bytes.count>3 {
-            for i in 0..<(bytes.count-3) where bytes[i]==0xFF && bytes[i+1]==0xD8 && bytes[i+2]==0xFF { append(.jpeg,i); break }
+        if bytes.count >= 3 {
+            for i in 0...(bytes.count-3) where bytes[i]==0xFF && bytes[i+1]==0xD8 && bytes[i+2]==0xFF { ranges.append((i,.jpeg)) }
         }
-        if let i=bytes.firstIndex(of:0x66), i+4<=bytes.count, Array(bytes[i..<i+4]) == [0x66,0x74,0x79,0x70] { append(.mp4,max(0,i-4)) }
-        if bytes.count>=4 {
-            for i in 0...(bytes.count-4) where Array(bytes[i..<i+4]) == [0x1A,0x45,0xDF,0xA3] { append(.webm,i); break }
+        if bytes.count >= 4 {
+            for i in 0...(bytes.count-4) where Array(bytes[i..<i+4]) == [0x66,0x74,0x79,0x70] && i >= 4 { ranges.append((i-4,.mp4)) }
+            for i in 0...(bytes.count-4) where Array(bytes[i..<i+4]) == [0x1A,0x45,0xDF,0xA3] { ranges.append((i,.webm)) }
         }
-        return out
+        ranges.sort { $0.0 < $1.0 }
+        var result:[BinaryAsset]=[]
+        for (index,(start,kind)) in ranges.enumerated() {
+            var end = index + 1 < ranges.count ? ranges[index+1].0 : bytes.count
+            if kind == .png, let marker = bytes.range(of:[0x49,0x45,0x4E,0x44,0xAE,0x42,0x60,0x82],options:[],in:start..<bytes.count) { end = marker.upperBound }
+            if kind == .jpeg, let marker = bytes.range(of:[0xFF,0xD9],options:[],in:start..<bytes.count) { end = marker.upperBound }
+            guard end > start, end <= bytes.count else { continue }
+            result.append(BinaryAsset(kind:kind,data:data.subdata(in:start..<end)))
+        }
+        return result
     }
 }
 
@@ -441,7 +448,7 @@ struct LibraryView: View {
                     }
                 }
             }.navigationTitle("Library")
-            .fileImporter(isPresented:$showImporter,allowedContentTypes:[.data,.image,.movie],allowsMultipleSelection:true){result in
+            .fileImporter(isPresented:$showImporter,allowedContentTypes:[.data,.image,.movie,.folder],allowsMultipleSelection:true){result in
                 if case .success(let urls)=result { exports.importFiles(urls) }
             }
             .overlay{if busy{ProgressView().padding(20).background(.regularMaterial,in:RoundedRectangle(cornerRadius:18))}}
