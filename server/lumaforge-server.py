@@ -56,7 +56,7 @@ def run(cmd, timeout=600):
 
 
 def steamcmd_download(workshop_id, target):
-    run([
+    output = run([
         STEAMCMD, "+@ShutdownOnFailedCommand", "1",
         "+@NoPromptForPassword", "1", "+login", "anonymous",
         "+force_install_dir", str(target),
@@ -64,6 +64,7 @@ def steamcmd_download(workshop_id, target):
     ], timeout=600)
     content = target / "steamapps" / "workshop" / "content" / APP_ID / workshop_id
     if not content.is_dir():
+        print(f"[lumaforge] SteamCMD produced no Workshop content for {workshop_id}: {output[-4000:]}", flush=True)
         raise RuntimeError("SteamCMD returned no Workshop content")
     return content
 
