@@ -24,8 +24,10 @@ STEAMCMD = os.getenv("STEAMCMD", "/opt/steamcmd/steamcmd.sh")
 ROOT = Path(os.getenv("WORK_ROOT", "/tmp/lumaforge"))
 MAX_AGE = int(os.getenv("WORK_MAX_AGE", "3600"))
 MAX_JOBS = int(os.getenv("MAX_JOBS", "1"))
-WORKSHOP_PROVIDER = os.getenv("WORKSHOP_PROVIDER", "ggnetwork,steamcmd").strip().lower()
+WORKSHOP_PROVIDER = os.getenv("WORKSHOP_PROVIDER", "swdl,ggnetwork,steamcmd").strip().lower()
 GGNETWORK_ENDPOINT = os.getenv("GGNETWORK_ENDPOINT", "https://api.ggntw.com/steam.request")
+SWDL_ENDPOINT = os.getenv("SWDL_ENDPOINT", "https://api.steamworkshopdownloader.io/api/download").rstrip("/")
+SWDL_TIMEOUT = int(os.getenv("SWDL_TIMEOUT", "900"))
 MAX_DOWNLOAD_BYTES = int(os.getenv("MAX_DOWNLOAD_BYTES", str(2 * 1024 * 1024 * 1024)))
 MAX_ZIP_ENTRIES = int(os.getenv("MAX_ZIP_ENTRIES", "100000"))
 MAX_EXTRACTED_BYTES = int(os.getenv("MAX_EXTRACTED_BYTES", str(4 * 1024 * 1024 * 1024)))
@@ -166,6 +168,82 @@ def ggnetwork_download(workshop_id, target):
     return _materialize_provider_file(downloaded, target)
 
 
+def steamworkshopdownloader_download(workshop_id, target):
+    request_payload = json.dumps({
+        "publishedFileId": int(workshop_id),
+        "collectionId": None,
+        "extract": True,
+        "hidden": False,
+        "direct": False,
+        "autodownload": False,
+    }).encode()
+    request = urllib.request.Request(
+        SWDL_ENDPOINT + "/request",
+        data=request_payload,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/plain, */*",
+            "User-Agent": "LumaForge/3.0",
+            "Referer": "https://steamworkshopdownloader.io/",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"Steam Workshop Downloader returned HTTP {exc.code}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Steam Workshop Downloader network error: {exc.reason}") from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Steam Workshop Downloader returned invalid JSON") from exc
+
+    request_id = data.get("uuid") if isinstance(data, dict) else None
+    if not isinstance(request_id, str) or not request_id:
+        raise RuntimeError("Steam Workshop Downloader returned no request ID")
+
+    status_request = urllib.request.Request(
+        SWDL_ENDPOINT + "/status",
+        data=json.dumps({"uuids": [request_id]}).encode(),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "LumaForge/3.0",
+            "Referer": "https://steamworkshopdownloader.io/",
+        },
+    )
+
+    deadline = time.time() + SWDL_TIMEOUT
+    state = None
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(status_request, timeout=30) as response:
+                status_data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            raise RuntimeError(f"Steam Workshop Downloader status HTTP {exc.code}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"Steam Workshop Downloader status network error: {exc.reason}") from exc
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("Steam Workshop Downloader returned invalid status JSON") from exc
+
+        state = status_data.get(request_id) if isinstance(status_data, dict) else None
+        if isinstance(state, dict):
+            status = str(state.get("status", "")).lower()
+            if status == "prepared":
+                break
+            if status in {"failed", "error"} or state.get("downloadError"):
+                raise RuntimeError(str(state.get("downloadError") or "Steam Workshop Downloader failed"))
+        time.sleep(1)
+    else:
+        raise RuntimeError("Steam Workshop Downloader timed out")
+
+    download_url = SWDL_ENDPOINT + "/transmit?uuid=" + request_id
+    downloaded = target / "provider-download"
+    _download_url_to_file(download_url, downloaded, timeout=900)
+    return _materialize_provider_file(downloaded, target)
+
+
 def steamcmd_download(workshop_id, target):
     output = run([
         STEAMCMD, "+@ShutdownOnFailedCommand", "1",
@@ -185,6 +263,8 @@ def acquire_workshop(workshop_id, target):
     errors = []
     for provider in providers:
         try:
+            if provider == "swdl":
+                return steamworkshopdownloader_download(workshop_id, target)
             if provider == "ggnetwork":
                 return ggnetwork_download(workshop_id, target)
             if provider == "steamcmd":
