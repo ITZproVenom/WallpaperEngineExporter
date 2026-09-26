@@ -535,7 +535,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/health":
-            return self.json(200, {"ok": True, "service": "lumaforge", "providers": WORKSHOP_PROVIDER, "converter": "ffmpeg"})
+            return self.json(200, {"ok": True, "service": "lumaforge", "providers": WORKSHOP_PROVIDER, "converter": "ffmpeg", "git_commit": os.getenv("RENDER_GIT_COMMIT", "")})
 
         if path.startswith("/v1/jobs/"):
             if not self.authorized():
