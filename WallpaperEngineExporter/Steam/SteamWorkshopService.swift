@@ -58,7 +58,7 @@ final class SteamWorkshopService: ObservableObject {
             }
         }
 
-        let uniqueIDs = Array(NSOrderedSet(array: ids)) as? [String] ?? Array(Set(ids))
+        let uniqueIDs = Array(Set(ids))
         guard !uniqueIDs.isEmpty else {
             if !sawPage {
                 lastError = "Could not reach Steam Workshop."
@@ -107,7 +107,7 @@ final class SteamWorkshopService: ObservableObject {
             return
         }
 
-        let ids = Array(NSOrderedSet(array: extractWorkshopIDs(from: html))) as? [String] ?? []
+        let ids = Array(Set(extractWorkshopIDs(from: html)))
         guard !ids.isEmpty else {
             searchResults = []
             lastError = "No Workshop items matched “\(trimmed)”."
