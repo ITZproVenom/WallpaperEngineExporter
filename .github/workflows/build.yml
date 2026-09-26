@@ -47,6 +47,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate server Python
         run: python3 -m py_compile server/lumaforge-server.py
+      - name: Run server unit tests
+        run: python3 -m unittest discover -s server -p 'test_*.py' -v
       - name: Test job API contract
         shell: bash
         run: |
@@ -73,7 +75,7 @@ jobs:
         run: docker build -t lumaforge-worker:test .
       - name: Verify thin-client boundary
         run: |
-          ! grep -R "AVFoundation\|AVAssetExportSession\|PackageInspector" LumaForge --include='*.swift'
+          ! grep -R "AVFoundation\|AVAssetExportSession\|PackageInspector" LumaForge LumaForge.xcodeproj --include='*.swift' --include='project.pbxproj'
 
   live-smoke:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -101,7 +103,7 @@ jobs:
           set -euo pipefail
           CREATE="$(curl -fsS --max-time 30 -X POST https://lumaforge-worker.onrender.com/v1/jobs \
             -H 'Content-Type: application/json' \
-            -d '{"workshop_id":"3797216571"}')"
+            -d '{"workshop_id":"3803559783"}')"
           JOB_ID="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["job_id"])' <<<"$CREATE")"
           test -n "$JOB_ID"
           for _ in $(seq 1 540); do
@@ -110,9 +112,11 @@ jobs:
             case "$STATUS" in
               completed)
                 FILENAME="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["filename"])' <<<"$BODY")"
-                curl -fsS --max-time 120 -o "$RUNNER_TEMP/lumaforge-smoke.mp4" "https://lumaforge-worker.onrender.com/v1/files/$FILENAME"
+                curl -fsS --max-time 180 -o "$RUNNER_TEMP/lumaforge-smoke.mp4" "https://lumaforge-worker.onrender.com/v1/files/$FILENAME"
                 test -s "$RUNNER_TEMP/lumaforge-smoke.mp4"
-                file "$RUNNER_TEMP/lumaforge-smoke.mp4"
+                ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,duration -of json "$RUNNER_TEMP/lumaforge-smoke.mp4" > "$RUNNER_TEMP/lumaforge-smoke.json"
+                python3 -c 'import json,sys; x=json.load(open(sys.argv[1])); s=x["streams"][0]; assert s["codec_name"]=="h264"; assert int(s["width"])>0; assert int(s["height"])>0; assert float(s["duration"])>0' "$RUNNER_TEMP/lumaforge-smoke.json"
+                curl -fsS -X DELETE "https://lumaforge-worker.onrender.com/v1/jobs/$JOB_ID" >/dev/null || true
                 exit 0
                 ;;
               failed)
