@@ -1,13 +1,14 @@
 // !$*UTF8*$!
 { archiveVersion = 1; objectVersion = 77; objects = {
 1 = {isa = PBXProject; attributes = {LastUpgradeCheck = 2700;}; buildConfigurationList = 3; compatibilityVersion = "Xcode 3.2"; developmentRegion = en; knownRegions = (en, Base); mainGroup = 4; productRefGroup = 5; targets = (2);};
-2 = {isa = PBXNativeTarget; buildConfigurationList = 6; buildPhases = (7,8,9); name = LumaDeck; productName = LumaDeck; productReference = 10; productType = "com.apple.product-type.application";};
+2 = {isa = PBXNativeTarget; buildConfigurationList = 6; buildPhases = (7,20,8,9); name = LumaDeck; productName = LumaDeck; productReference = 10; productType = "com.apple.product-type.application";};
 3 = {isa = XCConfigurationList; buildConfigurations = (11,12); defaultConfigurationName = Release;};
 4 = {isa = PBXGroup; children = (13,14,5); sourceTree = "<group>";};
 5 = {isa = PBXGroup; children = (10); name = Products; sourceTree = "<group>";};
 6 = {isa = XCConfigurationList; buildConfigurations = (15,16); defaultConfigurationName = Release;};
 7 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (21); runOnlyForDeploymentPostprocessing = 0;};
 8 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (30); runOnlyForDeploymentPostprocessing = 0;};
+20 = {isa = PBXShellScriptBuildPhase; buildActionMask = 2147483647; files = (); inputPaths = (); outputPaths = (); runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/sh; shellScript = "mkdir -p \"$SRCROOT/LumaDeck/Assets.xcassets/AppIcon.appiconset\"\nsips -s format png \"$SRCROOT/LumaDeck/Assets.xcassets/AppIcon.appiconset/icon.svg\" --out \"$SRCROOT/LumaDeck/Assets.xcassets/AppIcon.appiconset/icon.png\" >/dev/null\n"; };
 9 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
 10 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LumaDeck.app; sourceTree = BUILT_PRODUCTS_DIR;};
 11 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; SWIFT_VERSION = 6.0;}; name = Debug;};
