@@ -83,8 +83,8 @@ final class SteamSession: NSObject, ObservableObject, ASWebAuthenticationPresent
         components.queryItems = [
             .init(name: "openid.ns", value: "http://specs.openid.net/auth/2.0"),
             .init(name: "openid.mode", value: "checkid_setup"),
-            .init(name: "openid.return_to", value: "https://itzprovenom.github.io/WallpaperEngineExporter/steam-callback.html?state=\(state)"),
-            .init(name: "openid.realm", value: "https://itzprovenom.github.io/WallpaperEngineExporter/"),
+            .init(name: "openid.return_to", value: "https://fswswvhpszebuxnloysy.supabase.co/functions/v1/lumaforge-steam-callback?state=\(state)"),
+            .init(name: "openid.realm", value: "https://fswswvhpszebuxnloysy.supabase.co/"),
             .init(name: "openid.identity", value: "http://specs.openid.net/auth/2.0/identifier_select"),
             .init(name: "openid.claimed_id", value: "http://specs.openid.net/auth/2.0/identifier_select")
         ]
