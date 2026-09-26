@@ -12,7 +12,9 @@ struct MyWallpapersView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if workshop.items.isEmpty {
+                if workshop.isLoading && workshop.items.isEmpty {
+                    ProgressView("Loading Workshop…")
+                } else if workshop.items.isEmpty {
                     emptyState
                 } else {
                     ScrollView {
@@ -64,6 +66,11 @@ struct MyWallpapersView: View {
             }
             .navigationDestination(item: $selectedItem) { item in
                 WallpaperDetailView(item: item)
+            }
+            .task(id: auth.currentUser?.steamID) {
+                if let id = auth.currentUser?.steamID, workshop.items.isEmpty {
+                    await workshop.refreshLibrary(for: id)
+                }
             }
             .refreshable {
                 if let id = auth.currentUser?.steamID {
