@@ -42,11 +42,19 @@ final class DownloadManager: ObservableObject {
         defer { downloading = false }
 
         do {
-            // The server owns the SteamWorkshop.download integration. The iOS app
-            // only receives the resolved file URL and downloads the actual package.
-            let resolved = try await SteamWorkshopAPI.resolvedDownloadURL(for: id)
-            await downloadURL(resolved, alreadyMarked: true)
-            if downloadedURL != nil { return }
+            // Use SteamWorkshopDownloader.io first. Its backend requests the
+            // Workshop item through Steam's content service, waits for the
+            // download job to be prepared, then exposes the generated archive.
+            if let url = try await SteamWorkshopAPI.steamWorkshopDownloaderURL(for: id) {
+                await downloadURL(url, alreadyMarked: true)
+                if downloadedURL != nil { return }
+            }
+
+            // Existing server-side resolver remains a fallback.
+            if let resolved = try? await SteamWorkshopAPI.resolvedDownloadURL(for: id) {
+                await downloadURL(resolved, alreadyMarked: true)
+                if downloadedURL != nil { return }
+            }
 
             // Public Steam file_url remains a final fallback.
             if let url = try await SteamWorkshopAPI.fileURL(for: id) {
@@ -315,6 +323,109 @@ enum SteamWorkshopAPI {
             return nil
         }
         return URL(string: value)
+    }
+
+    static func steamWorkshopDownloaderURL(for id: String) async throws -> URL? {
+        let hosts = [
+            "https://backend-03-prd.steamworkshopdownloader.io",
+            "https://backend-02-prd.steamworkshopdownloader.io",
+            "https://backend-01-prd.steamworkshopdownloader.io"
+        ]
+
+        for host in hosts {
+            do {
+                var request = URLRequest(url: URL(string: host + "/api/download/request")!)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.setValue("application/json", forHTTPHeaderField: "Accept")
+                request.setValue("LumaForge/1.0", forHTTPHeaderField: "User-Agent")
+                request.httpBody = try JSONSerialization.data(withJSONObject: [
+                    "publishedFileId": Int(id) ?? 0,
+                    "collectionId": NSNull(),
+                    "extract": true,
+                    "hidden": true,
+                    "direct": false,
+                    "autodownload": true
+                ])
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse,
+                      (200..<300).contains(http.statusCode) else {
+                    continue
+                }
+
+                guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let uuid = object["uuid"] as? String,
+                      !uuid.isEmpty else {
+                    continue
+                }
+
+                let statusURL = URL(string: host + "/api/download/status")!
+                let deadline = Date().addingTimeInterval(120)
+
+                while Date() < deadline {
+                    var statusRequest = URLRequest(url: statusURL)
+                    statusRequest.httpMethod = "POST"
+                    statusRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    statusRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+                    statusRequest.setValue("LumaForge/1.0", forHTTPHeaderField: "User-Agent")
+                    statusRequest.httpBody = try JSONSerialization.data(withJSONObject: [
+                        "uuids": [uuid]
+                    ])
+
+                    let (statusData, statusResponse) = try await URLSession.shared.data(for: statusRequest)
+                    guard let statusHTTP = statusResponse as? HTTPURLResponse,
+                          (200..<300).contains(statusHTTP.statusCode) else {
+                        break
+                    }
+
+                    let statusObject = try? JSONSerialization.jsonObject(with: statusData)
+                    if Self.containsPreparedStatus(statusObject, uuid: uuid) {
+                        return URL(string: host + "/api/download/transmit?uuid=" + uuid)
+                    }
+
+                    try await Task.sleep(nanoseconds: 750_000_000)
+                }
+            } catch {
+                continue
+            }
+        }
+
+        return nil
+    }
+
+    private static func containsPreparedStatus(_ value: Any?, uuid: String) -> Bool {
+        if let string = value as? String {
+            return string.lowercased() == "prepared"
+        }
+
+        if let dictionary = value as? [String: Any] {
+            if let status = dictionary["status"] as? String,
+               status.lowercased() == "prepared" {
+                return true
+            }
+
+            if let entry = dictionary[uuid],
+               containsPreparedStatus(entry, uuid: uuid) {
+                return true
+            }
+
+            for child in dictionary.values {
+                if containsPreparedStatus(child, uuid: uuid) {
+                    return true
+                }
+            }
+        }
+
+        if let array = value as? [Any] {
+            for child in array {
+                if containsPreparedStatus(child, uuid: uuid) {
+                    return true
+                }
+            }
+        }
+
+        return false
     }
 
     static func resolvedDownloadURL(for id: String) async throws -> URL {
