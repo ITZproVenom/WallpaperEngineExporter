@@ -24,3 +24,5 @@ CI builds the unsigned iOS application and runs the unit tests.
 
 ## Build status
 The repository is intentionally rebuilt as a new LumaForge project rather than layered over the previous implementation.
+
+CI validation branch.
