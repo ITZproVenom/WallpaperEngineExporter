@@ -21,3 +21,4 @@ Steam's official Workshop download/install path is executed by the Steam Client.
 Open `LumaForge.xcodeproj` in Xcode 26 or newer and run the `LumaForge` scheme on iOS 18 or newer.
 
 CI builds the unsigned iOS application and runs the unit tests.
+
