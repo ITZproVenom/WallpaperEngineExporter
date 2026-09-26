@@ -42,23 +42,19 @@ final class DownloadManager: ObservableObject {
         defer { downloading = false }
 
         do {
+            // The server owns the SteamWorkshop.download integration. The iOS app
+            // only receives the resolved file URL and downloads the actual package.
+            let resolved = try await SteamWorkshopAPI.resolvedDownloadURL(for: id)
+            await downloadURL(resolved, alreadyMarked: true)
+            if downloadedURL != nil { return }
+
+            // Public Steam file_url remains a final fallback.
             if let url = try await SteamWorkshopAPI.fileURL(for: id) {
                 await downloadURL(url, alreadyMarked: true)
                 if downloadedURL != nil { return }
             }
 
-            if let swdURL = try await SteamWorkshopAPI.steamWorkshopDownloaderURL(for: id) {
-                await downloadURL(swdURL, alreadyMarked: true)
-                if downloadedURL != nil { return }
-            }
-
-            if let ggURL = try await SteamWorkshopAPI.ggNetworkDownloadURL(for: id) {
-                await downloadURL(ggURL, alreadyMarked: true)
-                if downloadedURL != nil { return }
-            }
-
-            let resolved = try await SteamWorkshopAPI.resolvedDownloadURL(for: id)
-            await downloadURL(resolved, alreadyMarked: true)
+            throw DownloadError.resolverFailed
         } catch {
             self.error = error.localizedDescription
         }
@@ -319,98 +315,6 @@ enum SteamWorkshopAPI {
             return nil
         }
         return URL(string: value)
-    }
-
-    static func ggNetworkDownloadURL(for id: String) async throws -> URL? {
-        let workshopURL = "https://steamcommunity.com/sharedfiles/filedetails/?id=" + id
-        let ggPageURL = URL(string: "https://ggntw.com/steam/" + id)!
-        let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
-
-        // GGNetwork's web client establishes a session before calling the API.
-        // Do the same so Cloudflare/session cookies are available to the API request.
-        var warmup = URLRequest(url: ggPageURL)
-        warmup.httpMethod = "GET"
-        warmup.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        warmup.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
-        warmup.setValue("https://ggntw.com/", forHTTPHeaderField: "Referer")
-        _ = try? await URLSession.shared.data(for: warmup)
-
-        var request = URLRequest(url: URL(string: "https://api.ggntw.com/steam.request")!)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 60
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
-        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue("https://ggntw.com", forHTTPHeaderField: "Origin")
-        request.setValue(ggPageURL.absoluteString, forHTTPHeaderField: "Referer")
-
-        if let cookies = HTTPCookieStorage.shared.cookies(for: ggPageURL), !cookies.isEmpty {
-            let header = cookies
-                .map { $0.name + "=" + $0.value }
-                .joined(separator: "; ")
-            request.setValue(header, forHTTPHeaderField: "Cookie")
-        }
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["url": workshopURL])
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            return nil
-        }
-
-        if let object = try? JSONSerialization.jsonObject(with: data) {
-            func findURL(_ value: Any) -> URL? {
-                if let string = value as? String,
-                   let url = URL(string: string),
-                   let scheme = url.scheme?.lowercased(),
-                   scheme == "http" || scheme == "https" {
-                    return url
-                }
-
-                if let dictionary = value as? [String: Any] {
-                    for key in ["download_url", "downloadUrl", "url", "link", "file", "download", "href"] {
-                        if let child = dictionary[key], let url = findURL(child) {
-                            return url
-                        }
-                    }
-                    for child in dictionary.values {
-                        if let url = findURL(child) {
-                            return url
-                        }
-                    }
-                }
-
-                if let array = value as? [Any] {
-                    for child in array {
-                        if let url = findURL(child) {
-                            return url
-                        }
-                    }
-                }
-
-                return nil
-            }
-
-            if let url = findURL(object) {
-                return url
-            }
-        }
-
-        // Older GGNetwork clients rely on the API's HTTP redirect rather than
-        // a JSON body. URLSession follows that redirect automatically, so the
-        // final response URL is the actual CDN/file URL in that case.
-        if let finalURL = http.url,
-           finalURL.host?.lowercased() != "api.ggntw.com",
-           finalURL.absoluteString != request.url?.absoluteString {
-            let mime = http.mimeType?.lowercased() ?? ""
-            let isHTML = mime.contains("html") || mime.contains("json") ||
-                mime.contains("javascript") || mime.hasPrefix("text/")
-            if !isHTML {
-                return finalURL
-            }
-        }
-
-        return nil
     }
 
     static func resolvedDownloadURL(for id: String) async throws -> URL {
