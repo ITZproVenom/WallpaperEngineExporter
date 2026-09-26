@@ -205,7 +205,7 @@ final class DownloadManager: ObservableObject {
            ) {
             let value = String(disposition[range])
                 .replacingOccurrences(of: "filename=", with: "")
-                .trimmingCharacters(in: CharacterSet(charactersIn: """))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
             if !value.isEmpty { return value }
         }
         return fallback.removingPercentEncoding ?? fallback
