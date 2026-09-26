@@ -192,7 +192,7 @@ final class DownloadManager: ObservableObject {
     private static func decodeHTMLEntities(_ value: String) -> String {
         value
             .replacingOccurrences(of: "&amp;", with: "&")
-            .replacingOccurrences(of: "&quot;", with: """)
+            .replacingOccurrences(of: "&quot;", with: "\"")
             .replacingOccurrences(of: "&#x27;", with: "'")
             .replacingOccurrences(of: "&#39;", with: "'")
     }
