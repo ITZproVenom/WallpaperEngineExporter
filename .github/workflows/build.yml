@@ -112,7 +112,21 @@ jobs:
             case "$STATUS" in
               completed)
                 FILENAME="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["filename"])' <<<"$BODY")"
-                curl -fsS --max-time 180 -o "$RUNNER_TEMP/lumaforge-smoke.mp4" "https://lumaforge-worker.onrender.com/v1/files/$FILENAME"
+                FILE_URL="https://lumaforge-worker.onrender.com/v1/files/$FILENAME"
+                FETCHED=0
+                for _ in $(seq 1 5); do
+                  if curl -fsS --max-time 180 -o "$RUNNER_TEMP/lumaforge-smoke.mp4" "$FILE_URL"; then
+                    FETCHED=1
+                    break
+                  fi
+                  sleep 2
+                done
+                if [ "$FETCHED" -ne 1 ]; then
+                  echo "Final MP4 fetch failed: $FILE_URL"
+                  echo "$BODY"
+                  curl -sS -i --max-time 30 "$FILE_URL" || true
+                  exit 1
+                fi
                 test -s "$RUNNER_TEMP/lumaforge-smoke.mp4"
                 ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,duration -of json "$RUNNER_TEMP/lumaforge-smoke.mp4" > "$RUNNER_TEMP/lumaforge-smoke.json"
                 python3 -c 'import json,sys; x=json.load(open(sys.argv[1])); s=x["streams"][0]; assert s["codec_name"]=="h264"; assert int(s["width"])>0; assert int(s["height"])>0; assert float(s["duration"])>0' "$RUNNER_TEMP/lumaforge-smoke.json"
