@@ -36,6 +36,8 @@ Jobs are temporary. Generated files are automatically removed after `WORK_MAX_AG
 - `WORKSHOP_PROVIDER=ggnetwork,steamcmd`
 - `GGNETWORK_ENDPOINT=https://api.ggntw.com/steam.request`
 - `MAX_DOWNLOAD_BYTES=2147483648`
+- `MAX_ZIP_ENTRIES=100000`
+- `MAX_EXTRACTED_BYTES=4294967296`
 
 ## Docker
 
