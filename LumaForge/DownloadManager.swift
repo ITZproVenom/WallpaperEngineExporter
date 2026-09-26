@@ -353,9 +353,59 @@ enum SteamWorkshopAPI {
             return nil
         }
 
-        guard let object = try? JSONSerialization.jsonObject(with: data) else {
-            return nil
+        if let object = try? JSONSerialization.jsonObject(with: data) {
+            func findURL(_ value: Any) -> URL? {
+                if let string = value as? String,
+                   let url = URL(string: string),
+                   let scheme = url.scheme?.lowercased(),
+                   scheme == "http" || scheme == "https" {
+                    return url
+                }
+
+                if let dictionary = value as? [String: Any] {
+                    for key in ["download_url", "downloadUrl", "url", "link", "file", "download", "href"] {
+                        if let child = dictionary[key], let url = findURL(child) {
+                            return url
+                        }
+                    }
+                    for child in dictionary.values {
+                        if let url = findURL(child) {
+                            return url
+                        }
+                    }
+                }
+
+                if let array = value as? [Any] {
+                    for child in array {
+                        if let url = findURL(child) {
+                            return url
+                        }
+                    }
+                }
+
+                return nil
+            }
+
+            if let url = findURL(object) {
+                return url
+            }
         }
+
+        // Older GGNetwork clients rely on the API's HTTP redirect rather than
+        // a JSON body. URLSession follows that redirect automatically, so the
+        // final response URL is the actual CDN/file URL in that case.
+        if let finalURL = http.url,
+           finalURL.host?.lowercased() != "api.ggntw.com",
+           finalURL.absoluteString != request.url?.absoluteString {
+            let mime = http.mimeType?.lowercased() ?? ""
+            let isHTML = mime.contains("html") || mime.contains("json") ||
+                mime.contains("javascript") || mime.hasPrefix("text/")
+            if !isHTML {
+                return finalURL
+            }
+        }
+
+        return nil
 
         func findURL(_ value: Any) -> URL? {
             if let string = value as? String,
