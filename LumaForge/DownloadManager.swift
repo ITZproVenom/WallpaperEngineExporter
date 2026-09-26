@@ -13,7 +13,25 @@ final class DownloadManager: ObservableObject {
             error = "Paste a valid Steam Workshop link or download URL."
             return
         }
-        Task { await downloadURL(url) }
+
+        if let id = Self.workshopID(from: url) {
+            Task { await downloadWorkshopItem(id: id) }
+        } else {
+            Task { await downloadURL(url) }
+        }
+    }
+
+    static func workshopID(from url: URL) -> String? {
+        guard let host = url.host?.lowercased(),
+              host == "steamcommunity.com" || host.hasSuffix(".steamcommunity.com"),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let id = components.queryItems?.first(where: { $0.name.lowercased() == "id" })?.value,
+              id.count >= 6,
+              id.count <= 20,
+              id.allSatisfy({ $0.isNumber }) else {
+            return nil
+        }
+        return id
     }
 
     func downloadWorkshopItem(id: String) async {
