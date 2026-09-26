@@ -137,7 +137,7 @@ struct ExportSettingsView: View {
                 }
                 await MainActor.run {
                     isExporting = false
-                    exportedURL = savedURL.path
+                    exportedURL = savedURL
                 }
             } catch {
                 await MainActor.run {
