@@ -23,6 +23,7 @@ PORT = int(os.getenv("PORT", "8080"))
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 API_KEY = os.getenv("API_KEY", "")
 STEAMCMD = os.getenv("STEAMCMD", "/opt/steamcmd/steamcmd.sh")
+DEPOT_DOWNLOADER = os.getenv("DEPOT_DOWNLOADER", "/opt/depotdownloader/DepotDownloader")
 ROOT = Path(os.getenv("WORK_ROOT", "/tmp/lumaforge"))
 MAX_AGE = int(os.getenv("WORK_MAX_AGE", "3600"))
 MAX_JOBS = int(os.getenv("MAX_JOBS", "1"))
@@ -360,6 +361,38 @@ def steamworkshopdownloader_download(workshop_id, target):
         except Exception as exc:
             errors.append(f"{endpoint}: {exc}")
     raise RuntimeError("all Steam Workshop Downloader endpoints failed: " + " | ".join(errors))
+
+
+def depotdownloader_download(workshop_id, target):
+    if not Path(DEPOT_DOWNLOADER).is_file():
+        raise RuntimeError("DepotDownloader is not installed")
+    username = os.environ.get("STEAM_USERNAME", "").strip()
+    password = os.environ.get("STEAM_PASSWORD", "")
+    cmd = [
+        DEPOT_DOWNLOADER,
+        "-app", APP_ID,
+        "-pubfile", workshop_id,
+        "-dir", str(target),
+        "-max-downloads", "4",
+    ]
+    # Anonymous is the default. Credentials are only added when explicitly
+    # configured for restricted/subscribed content.
+    if username:
+        cmd += ["-username", username]
+        if password:
+            cmd += ["-password", password]
+    output = run(cmd, timeout=900)
+    content = target / "steamapps" / "workshop" / "content" / APP_ID / workshop_id
+    if not content.is_dir():
+        # DepotDownloader may place Workshop content directly under the
+        # requested directory depending on its version.
+        candidates = [p for p in target.rglob("*") if p.is_dir() and p.name == workshop_id]
+        if candidates:
+            content = max(candidates, key=lambda p: len(p.parts))
+    if not content.is_dir():
+        mode = "authenticated" if username else "anonymous"
+        raise RuntimeError(f"DepotDownloader {mode} download failed; output=" + output[-5000:])
+    return content
 
 
 def steamcmd_download(workshop_id, target):
