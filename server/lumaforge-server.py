@@ -17,6 +17,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+from linux_wallpaperengine_renderer import render_scene as render_linux_wallpaperengine
+
 APP_ID = "431960"
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))
@@ -579,6 +581,8 @@ SCENE_RENDER_WIDTH = int(os.getenv("SCENE_RENDER_WIDTH", "1280"))
 SCENE_RENDER_HEIGHT = int(os.getenv("SCENE_RENDER_HEIGHT", "720"))
 SCENE_RENDER_SECONDS = int(os.getenv("SCENE_RENDER_SECONDS", "6"))
 SCENE_RENDER_FPS = int(os.getenv("SCENE_RENDER_FPS", "30"))
+LWE_ASSETS_DIR = os.getenv("LWE_ASSETS_DIR", "/opt/wallpaper-engine/assets")
+LWE_RENDERER_ENABLED = os.getenv("LWE_RENDERER_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def find_scene_pkg(content):
@@ -599,6 +603,23 @@ def stage_scene_project(pkg, scratch):
 
 
 def render_scene_pkg_to_mp4(pkg, output, scratch):
+    # Prefer the native Linux Wallpaper Engine renderer when the official
+    # Wallpaper Engine assets are available. The JS renderer remains a fallback.
+    if LWE_RENDERER_ENABLED and Path(LWE_ASSETS_DIR).is_dir():
+        try:
+            render_linux_wallpaperengine(
+                pkg.parent,
+                output,
+                assets_dir=LWE_ASSETS_DIR,
+                width=SCENE_RENDER_WIDTH,
+                height=SCENE_RENDER_HEIGHT,
+                seconds=SCENE_RENDER_SECONDS,
+                fps=SCENE_RENDER_FPS,
+            )
+            return
+        except Exception as exc:
+            print(f"[lumaforge] native Linux Wallpaper Engine renderer failed: {exc}", flush=True)
+
     if not Path(SCENE_RENDERER).is_file():
         raise RuntimeError("Server scene renderer is not installed")
     if shutil.which("node") is None:
@@ -713,6 +734,8 @@ class Handler(BaseHTTPRequestHandler):
                 "ok": True, "service": "lumaforge", "version": "4.0",
                 "providers": WORKSHOP_PROVIDER, "converter": "ffmpeg",
                 "scene_renderer": Path(SCENE_RENDERER).is_file(),
+                "linux_wallpaperengine": Path(os.getenv("LWE_RENDERER", "/opt/linux-wallpaperengine/linux-wallpaperengine")).is_file(),
+                "linux_wallpaperengine_assets": Path(LWE_ASSETS_DIR).is_dir(),
                 "server_side_only": True,
                 "git_commit": os.getenv("RENDER_GIT_COMMIT", ""),
             })
