@@ -67,7 +67,7 @@ int main(int argc, char** argv) {
     }
     fs::create_directories(output);
 
-    void* lib = dlopen("libsteam_api.so", RTLD_NOW | RTLD_LOCAL);
+    void* lib = dlopen("steam_api.so", RTLD_NOW | RTLD_LOCAL);
     if (!lib) {
         std::cerr << "steam_ugc: cannot load libsteam_api.so: " << dlerror() << "\n";
         return 3;
