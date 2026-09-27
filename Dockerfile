@@ -39,9 +39,8 @@ RUN dpkg --add-architecture i386 \
  && npm install --omit=dev --no-audit --no-fund puppeteer-core@24.20.0 \
  && rm -f package.json package-lock.json
 
-COPY --from=depotbuilder /out/DepotDownloader.dll /opt/depotdownloader/DepotDownloader.dll
+COPY --from=depotbuilder /out/ /opt/depotdownloader/
 COPY --from=depotbuilder /usr/share/dotnet /usr/share/dotnet
-COPY --from=depotbuilder /usr/share/dotnet/host /usr/share/dotnet/host
 RUN printf '#!/bin/sh\nexec /usr/share/dotnet/dotnet /opt/depotdownloader/DepotDownloader.dll "$@"\n' > /opt/depotdownloader/DepotDownloader \
  && chmod +x /opt/depotdownloader/DepotDownloader
 
