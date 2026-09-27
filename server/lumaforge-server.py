@@ -237,9 +237,9 @@ def steam_api_download(workshop_id, target):
     if not isinstance(download_url, str) or not download_url:
         raise RuntimeError(
             "Steam API has no direct file URL for this Workshop item; "
-            f"title={item.get("title")!r} file_type={item.get("file_type")} "
-            f"filename={item.get("filename")!r} hcontent_file={item.get("hcontent_file")} "
-            f"youtubevideoid={item.get('youtubevideoid')!r} url={item.get('url')!r}"
+            f'title={item.get("title")!r} file_type={item.get("file_type")} '
+            f'filename={item.get("filename")!r} hcontent_file={item.get("hcontent_file")} '
+            f'youtubevideoid={item.get("youtubevideoid")!r} url={item.get("url")!r}'
         )
     parsed = urlparse(download_url)
     if parsed.scheme == "http":
