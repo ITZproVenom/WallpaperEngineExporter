@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libgl1-mesa-dev libglew-dev freeglut3-dev libsdl2-dev liblz4-dev \
       libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
       libmpv-dev libpulse-dev libfreetype6-dev libdbus-1-dev \
-      libwayland-dev wayland-protocols libegl1-mesa-dev libglfw3-dev libfftw3-dev \
+      libwayland-dev wayland-protocols libegl1-mesa-dev libglfw3-dev libfftw3-dev libglm-dev \
  && rm -rf /var/lib/apt/lists/* \
  && git clone --depth 1 --recurse-submodules https://github.com/Almamu/linux-wallpaperengine.git /src/linux-wallpaperengine \
  && cmake -S /src/linux-wallpaperengine -B /src/linux-wallpaperengine/build -DCMAKE_BUILD_TYPE=Release \
