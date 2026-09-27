@@ -2,8 +2,9 @@ FROM debian:bookworm-slim AS lwebuilder
 
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /src
+COPY server/patch_lwe_sources.py /tmp/patch_lwe_sources.py
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates git cmake build-essential pkg-config \
+      ca-certificates git cmake build-essential pkg-config python3 \
       libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
       libgl1-mesa-dev libglew-dev freeglut3-dev libsdl2-dev liblz4-dev \
       libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
