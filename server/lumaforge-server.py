@@ -6,17 +6,16 @@ import re
 import shutil
 import socket
 import subprocess
-import tempfile
 import threading
 import time
 import uuid
-import zipfile
 import urllib.error
 import urllib.request
+import urllib.parse
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
-import urllib.parse
 
 APP_ID = "431960"
 HOST = os.getenv("HOST", "0.0.0.0")
@@ -28,15 +27,38 @@ ROOT = Path(os.getenv("WORK_ROOT", "/tmp/lumaforge"))
 MAX_AGE = int(os.getenv("WORK_MAX_AGE", "3600"))
 MAX_JOBS = int(os.getenv("MAX_JOBS", "1"))
 MAX_MEMORY_JOBS = int(os.getenv("MAX_MEMORY_JOBS", "100"))
-WORKSHOP_PROVIDER = os.getenv("WORKSHOP_PROVIDER", "supabase,swdl,ggnetwork,steamcmd").strip().lower()
+WORKSHOP_PROVIDER = os.getenv(
+    "WORKSHOP_PROVIDER", "swdl,ggnetwork,supabase,steamcmd"
+).strip().lower()
 GGNETWORK_ENDPOINT = os.getenv("GGNETWORK_ENDPOINT", "https://api.ggntw.com/steam.request")
-SWDL_ENDPOINTS = [u.strip().rstrip("/") for u in os.getenv("SWDL_ENDPOINTS", "https://node03.steamworkshopdownloader.io/prod/api/download,https://backend-01-prd.steamworkshopdownloader.io/api/download,https://api.steamworkshopdownloader.io/api/download").split(",") if u.strip()]
+SWDL_ENDPOINTS = [
+    u.strip().rstrip("/")
+    for u in os.getenv(
+        "SWDL_ENDPOINTS",
+        "https://node03.steamworkshopdownloader.io/prod/api/download,"
+        "https://backend-01-prd.steamworkshopdownloader.io/api/download,"
+        "https://api.steamworkshopdownloader.io/api/download",
+    ).split(",")
+    if u.strip()
+]
 SWDL_TIMEOUT = int(os.getenv("SWDL_TIMEOUT", "900"))
-SUPABASE_RESOLVER_URL = os.getenv("SUPABASE_RESOLVER_URL", "https://yxyfdxjyxcpitrrllopi.supabase.co/functions/v1/lumaforge-workshop-resolver").rstrip("/")
+SUPABASE_RESOLVER_URL = os.getenv(
+    "SUPABASE_RESOLVER_URL",
+    "https://yxyfdxjyxcpitrrllopi.supabase.co/functions/v1/lumaforge-workshop-resolver",
+).rstrip("/")
 MAX_DOWNLOAD_BYTES = int(os.getenv("MAX_DOWNLOAD_BYTES", str(2 * 1024 * 1024 * 1024)))
 MAX_ZIP_ENTRIES = int(os.getenv("MAX_ZIP_ENTRIES", "100000"))
 MAX_EXTRACTED_BYTES = int(os.getenv("MAX_EXTRACTED_BYTES", str(4 * 1024 * 1024 * 1024)))
+MIN_MEDIA_DIMENSION = int(os.getenv("MIN_MEDIA_DIMENSION", "64"))
 ID_RE = re.compile(r"^\d{6,20}$")
+VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi", ".wmv"}
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+PREVIEW_NAMES = {
+    "preview.jpg", "preview.jpeg", "preview.png", "preview.webp",
+    "thumbnail.jpg", "thumbnail.jpeg", "thumbnail.png", "thumbnail.webp",
+    "cover.jpg", "cover.jpeg", "cover.png", "cover.webp",
+}
+
 jobs = {}
 jobs_lock = threading.Lock()
 slots = threading.BoundedSemaphore(MAX_JOBS)
@@ -45,41 +67,36 @@ ROOT.mkdir(parents=True, exist_ok=True)
 
 def set_job(job_id, **values):
     with jobs_lock:
-        job = jobs.get(job_id)
-        if job is not None:
-            job.update(values)
+        if job_id in jobs:
+            jobs[job_id].update(values)
 
 
 def cleanup():
     cutoff = time.time() - MAX_AGE
-    active_ids = set()
+    active = set()
     with jobs_lock:
         for job_id, job in list(jobs.items()):
-            status = job.get("status")
-            created_at = int(job.get("created_at", 0))
-            if status in {"queued", "downloading", "converting"}:
-                active_ids.add(job_id)
-            elif created_at and created_at < cutoff:
+            if job.get("status") in {"queued", "downloading", "converting"}:
+                active.add(job_id)
+            elif job.get("created_at", 0) < cutoff:
                 jobs.pop(job_id, None)
-
     for p in list(ROOT.iterdir()):
         try:
-            if p.name.startswith("job-") and p.name[4:] in active_ids:
+            if p.name.startswith("job-") and p.name[4:] in active:
                 continue
             if p.stat().st_mtime < cutoff:
-                if p.is_dir():
-                    shutil.rmtree(p, ignore_errors=True)
-                else:
-                    p.unlink()
+                shutil.rmtree(p, ignore_errors=True) if p.is_dir() else p.unlink()
         except OSError:
             pass
 
 
 def run(cmd, timeout=600):
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, timeout=timeout, check=False)
+    result = subprocess.run(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, timeout=timeout, check=False
+    )
     if result.returncode:
-        raise RuntimeError(result.stdout[-4000:] or "Command failed")
+        raise RuntimeError(result.stdout[-5000:] or "Command failed")
     return result.stdout
 
 
@@ -90,15 +107,21 @@ def _validate_download_url(url):
     host = (parsed.hostname or "").lower()
     if not host or host.endswith(".local"):
         raise RuntimeError("Downloader returned an unsafe URL")
-
     try:
-        addresses = {item[4][0] for item in socket.getaddrinfo(host, parsed.port or 443, type=socket.SOCK_STREAM)}
+        addresses = {
+            item[4][0]
+            for item in socket.getaddrinfo(
+                host, parsed.port or 443, type=socket.SOCK_STREAM
+            )
+        }
     except socket.gaierror as exc:
         raise RuntimeError(f"Downloader URL host could not be resolved: {host}") from exc
-
     for address in addresses:
         ip = ipaddress.ip_address(address)
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+        if (
+            ip.is_private or ip.is_loopback or ip.is_link_local
+            or ip.is_multicast or ip.is_reserved or ip.is_unspecified
+        ):
             raise RuntimeError("Downloader returned an unsafe URL")
     return parsed
 
@@ -115,10 +138,9 @@ SAFE_OPENER = urllib.request.build_opener(SafeRedirectHandler)
 def _download_url_to_file(url, destination, timeout=900):
     _validate_download_url(url)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    request = urllib.request.Request(url, headers={
-        "User-Agent": "LumaForge/3.0",
-        "Accept": "*/*",
-    })
+    request = urllib.request.Request(
+        url, headers={"User-Agent": "LumaForge/4.0", "Accept": "*/*"}
+    )
     try:
         with SAFE_OPENER.open(request, timeout=timeout) as response:
             _validate_download_url(response.geturl())
@@ -142,69 +164,76 @@ def _download_url_to_file(url, destination, timeout=900):
     return destination
 
 
+def safe_extract_zip(archive, target):
+    root = target.resolve()
+    infos = archive.infolist()
+    if len(infos) > MAX_ZIP_ENTRIES:
+        raise RuntimeError("Workshop ZIP contains too many entries")
+    total = 0
+    for info in infos:
+        if info.file_size < 0:
+            raise RuntimeError("Workshop ZIP contains an invalid entry")
+        total += info.file_size
+        if total > MAX_EXTRACTED_BYTES:
+            raise RuntimeError("Workshop ZIP expands beyond the server extraction limit")
+        destination = (target / info.filename).resolve()
+        if destination != root and root not in destination.parents:
+            raise RuntimeError("Unsafe ZIP entry")
+    for info in infos:
+        archive.extract(info, target)
+
+
 def _materialize_provider_file(downloaded, target):
     content = target / "content"
     content.mkdir(parents=True, exist_ok=True)
-
     if zipfile.is_zipfile(downloaded):
         safe_extract_zip(downloaded, content)
         return content
-
     data = downloaded.read_bytes()
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        destination = content / "workshop.png"
+        name = "workshop.png"
     elif data.startswith(b"\xff\xd8\xff"):
-        destination = content / "workshop.jpg"
+        name = "workshop.jpg"
     elif len(data) >= 12 and data[4:8] == b"ftyp":
-        destination = content / "workshop.mp4"
+        name = "workshop.mp4"
     else:
         suffix = Path(urlparse(downloaded.name).path).suffix.lower()
-        destination = content / ("workshop" + suffix if suffix else "workshop.pkg")
-    destination.write_bytes(data)
+        name = "workshop" + (suffix if suffix else ".pkg")
+    (content / name).write_bytes(data)
     return content
 
 
 def ggnetwork_download(workshop_id, target):
-    workshop_url = f"https://steamcommunity.com/sharedfiles/filedetails/?id={workshop_id}"
-    payload = json.dumps({"url": workshop_url}).encode()
+    payload = json.dumps({
+        "url": f"https://steamcommunity.com/sharedfiles/filedetails/?id={workshop_id}"
+    }).encode()
     request = urllib.request.Request(
-        GGNETWORK_ENDPOINT,
-        data=payload,
-        method="POST",
+        GGNETWORK_ENDPOINT, data=payload, method="POST",
         headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Origin": "https://ggntw.com",
-            "Referer": "https://ggntw.com/",
-            "User-Agent": "LumaForge/3.0",
+            "Content-Type": "application/json", "Accept": "application/json",
+            "Origin": "https://ggntw.com", "Referer": "https://ggntw.com/",
+            "User-Agent": "LumaForge/4.0",
         },
     )
     try:
         with urllib.request.urlopen(request, timeout=90) as response:
             if response.status != 200:
                 raise RuntimeError(f"GGNetwork returned HTTP {response.status}")
-            data = json.loads(response.read().decode("utf-8"))
+            data = json.loads(response.read().decode())
     except urllib.error.HTTPError as exc:
         raise RuntimeError(f"GGNetwork returned HTTP {exc.code}") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"GGNetwork network error: {exc.reason}") from exc
     except json.JSONDecodeError as exc:
         raise RuntimeError("GGNetwork returned invalid JSON") from exc
-
-    download_url = None
-    for key in ("download_url", "url", "link", "file", "download"):
-        if isinstance(data, dict) and isinstance(data.get(key), str):
-            download_url = data[key]
-            break
-    if not download_url and isinstance(data, dict) and isinstance(data.get("data"), dict):
-        nested = data["data"]
-        for key in ("download_url", "url", "link", "file", "download"):
-            if isinstance(nested.get(key), str):
-                download_url = nested[key]
-                break
+    nested = data.get("data") if isinstance(data, dict) and isinstance(data.get("data"), dict) else data
+    download_url = next(
+        (nested.get(k) for k in ("download_url", "url", "link", "file", "download")
+         if isinstance(nested, dict) and isinstance(nested.get(k), str)),
+        None,
+    )
     if not download_url:
         raise RuntimeError("GGNetwork returned no download URL")
-
     downloaded = target / "provider-download"
     _download_url_to_file(download_url, downloaded)
     return _materialize_provider_file(downloaded, target)
@@ -212,27 +241,25 @@ def ggnetwork_download(workshop_id, target):
 
 def supabase_resolver_download(workshop_id, target):
     url = SUPABASE_RESOLVER_URL + "?id=" + urllib.parse.quote(workshop_id, safe="")
-    request = urllib.request.Request(url, headers={
-        "Accept": "application/json",
-        "User-Agent": "LumaForge/3.0",
-    })
+    request = urllib.request.Request(
+        url, headers={"Accept": "application/json", "User-Agent": "LumaForge/4.0"}
+    )
     try:
-        with urllib.request.urlopen(request, timeout=90) as response:            data = json.loads(response.read().decode("utf-8"))
+        with urllib.request.urlopen(request, timeout=90) as response:
+            data = json.loads(response.read().decode())
     except urllib.error.HTTPError as exc:
-        raise RuntimeError(f"LumaForge resolver returned HTTP {exc.code}")
+        raise RuntimeError(f"LumaForge resolver returned HTTP {exc.code}") from exc
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"LumaForge resolver network error: {exc.reason}")
+        raise RuntimeError(f"LumaForge resolver network error: {exc.reason}") from exc
     except json.JSONDecodeError as exc:
         raise RuntimeError("LumaForge resolver returned invalid JSON") from exc
-
     if not isinstance(data, dict):
         raise RuntimeError("LumaForge resolver returned an invalid response")
     download_url = data.get("download_url")
     if not isinstance(download_url, str) or not download_url:
         raise RuntimeError(str(data.get("error") or "LumaForge resolver returned no download URL"))
-
     downloaded = target / "provider-download"
-    _download_url_to_file(download_url, downloaded, timeout=900)
+    _download_url_to_file(download_url, downloaded)
     return _materialize_provider_file(downloaded, target)
 
 
@@ -240,47 +267,35 @@ def steamworkshopdownloader_download(workshop_id, target):
     errors = []
     for endpoint in SWDL_ENDPOINTS:
         try:
-            request_payload = json.dumps({
+            payload = json.dumps({
                 "publishedFileId": int(workshop_id),
-                "collectionId": None,
-                "extract": True,
-                "hidden": False,
-                "direct": False,
-                "autodownload": False,
+                "collectionId": None, "extract": True,
+                "hidden": False, "direct": False, "autodownload": False,
             }).encode()
             request = urllib.request.Request(
-                endpoint + "/request",
-                data=request_payload,
-                method="POST",
+                endpoint + "/request", data=payload, method="POST",
                 headers={
                     "Content-Type": "application/json",
                     "Accept": "application/json, text/plain, */*",
-                    "User-Agent": "LumaForge/3.0",
+                    "User-Agent": "LumaForge/4.0",
                     "Referer": "https://steamworkshopdownloader.io/",
                 },
             )
             with urllib.request.urlopen(request, timeout=90) as response:
-                data = json.loads(response.read().decode("utf-8"))
+                data = json.loads(response.read().decode())
             request_id = data.get("uuid") if isinstance(data, dict) else None
-            if not isinstance(request_id, str) or not request_id:
+            if not request_id:
                 raise RuntimeError("no request ID")
-
             deadline = time.time() + SWDL_TIMEOUT
-            state = None
             while time.time() < deadline:
                 status_request = urllib.request.Request(
                     endpoint + "/status",
                     data=json.dumps({"uuids": [request_id]}).encode(),
                     method="POST",
-                    headers={
-                        "Content-Type": "application/json",
-                        "Accept": "application/json",
-                        "User-Agent": "LumaForge/3.0",
-                        "Referer": "https://steamworkshopdownloader.io/",
-                    },
+                    headers={"Content-Type": "application/json", "Accept": "application/json"},
                 )
                 with urllib.request.urlopen(status_request, timeout=30) as response:
-                    status_data = json.loads(response.read().decode("utf-8"))
+                    status_data = json.loads(response.read().decode())
                 state = status_data.get(request_id) if isinstance(status_data, dict) else None
                 if isinstance(state, dict):
                     status = str(state.get("status", "")).lower()
@@ -291,59 +306,145 @@ def steamworkshopdownloader_download(workshop_id, target):
                 time.sleep(1)
             else:
                 raise RuntimeError("provider timed out")
-
             downloaded = target / "provider-download"
-            direct_url = endpoint + "/transmit?uuid=" + request_id
-            _download_url_to_file(direct_url, downloaded, timeout=900)
+            _download_url_to_file(
+                endpoint + "/transmit?uuid=" + request_id, downloaded, timeout=900
+            )
             return _materialize_provider_file(downloaded, target)
-        except urllib.error.HTTPError as exc:
-            errors.append(f"{endpoint}: HTTP {exc.code}")
-        except urllib.error.URLError as exc:
-            errors.append(f"{endpoint}: network error: {exc.reason}")
-        except json.JSONDecodeError:
-            errors.append(f"{endpoint}: invalid JSON")
         except Exception as exc:
             errors.append(f"{endpoint}: {exc}")
     raise RuntimeError("all Steam Workshop Downloader endpoints failed: " + " | ".join(errors))
 
+
 def steamcmd_download(workshop_id, target):
-    output = run([
+    run([
         STEAMCMD, "+@ShutdownOnFailedCommand", "1",
-        "+@NoPromptForPassword", "1",
-        "+force_install_dir", str(target),
-        "+login", "anonymous",
-        "+workshop_download_item", APP_ID, workshop_id, "validate", "+quit"
+        "+@NoPromptForPassword", "1", "+force_install_dir", str(target),
+        "+login", "anonymous", "+workshop_download_item", APP_ID, workshop_id,
+        "validate", "+quit",
     ], timeout=600)
     content = target / "steamapps" / "workshop" / "content" / APP_ID / workshop_id
-    if content.is_dir():
-        return content
-    raise RuntimeError("SteamCMD returned no Workshop content")
+    if not content.is_dir():
+        raise RuntimeError("SteamCMD returned no Workshop content")
+    return content
+
+
+def ffprobe_media(path):
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=width,height,duration",
+            "-of", "json", str(path),
+        ],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False,
+    )
+    if result.returncode:
+        raise RuntimeError("FFprobe could not read media")
+    streams = json.loads(result.stdout).get("streams", [])
+    if not streams:
+        raise RuntimeError("Media contains no video stream")
+    stream = streams[0]
+    width, height = int(stream.get("width") or 0), int(stream.get("height") or 0)
+    duration = float(stream.get("duration") or 0)
+    if width < MIN_MEDIA_DIMENSION or height < MIN_MEDIA_DIMENSION:
+        raise RuntimeError(f"Media is only {width}x{height}; refusing placeholder media")
+    if duration <= 0:
+        raise RuntimeError("Media has no usable duration")
+    return width, height, duration
+
+
+def image_dimensions(path):
+    try:
+        from PIL import Image
+        with Image.open(path) as image:
+            return image.size
+    except Exception as exc:
+        raise RuntimeError(f"Invalid image: {exc}") from exc
+
+
+def validate_workshop_content(content):
+    files = [p for p in content.rglob("*") if p.is_file()]
+    scene_pkgs = [
+        p for p in files
+        if p.name.lower() == "scene.pkg" and p.stat().st_size >= 1024
+    ]
+    if scene_pkgs:
+        return {"kind": "scene", "path": max(scene_pkgs, key=lambda p: p.stat().st_size)}
+
+    videos = [p for p in files if p.suffix.lower() in VIDEO_EXTS]
+    valid_videos = []
+    video_errors = []
+    for path in videos:
+        try:
+            ffprobe_media(path)
+            valid_videos.append(path)
+        except Exception as exc:
+            video_errors.append(str(exc))
+    if valid_videos:
+        return {"kind": "video", "path": max(valid_videos, key=lambda p: p.stat().st_size)}
+
+    gifs = [p for p in files if p.suffix.lower() == ".gif" and p.name.lower() not in PREVIEW_NAMES]
+    if gifs:
+        return {"kind": "gif", "path": max(gifs, key=lambda p: p.stat().st_size)}
+
+    valid_images = []
+    for path in files:
+        if path.suffix.lower() not in IMAGE_EXTS or path.name.lower() in PREVIEW_NAMES:
+            continue
+        try:
+            width, height = image_dimensions(path)
+            if width >= MIN_MEDIA_DIMENSION and height >= MIN_MEDIA_DIMENSION:
+                valid_images.append(path)
+        except Exception:
+            continue
+    if valid_images:
+        return {"kind": "image", "path": max(valid_images, key=lambda p: p.stat().st_size)}
+
+    names = ", ".join(p.name for p in files[:12])
+    if files and all(p.name.lower() in PREVIEW_NAMES for p in files):
+        raise RuntimeError("Provider returned preview-only media, not the Workshop wallpaper")
+    if video_errors:
+        raise RuntimeError("Provider returned invalid video media: " + video_errors[0])
+    raise RuntimeError("Provider returned no usable Wallpaper Engine content: " + names)
 
 
 def acquire_workshop(workshop_id, target):
     providers = [p.strip() for p in WORKSHOP_PROVIDER.split(",") if p.strip()]
     errors = []
-    for provider in providers:
+    for index, provider in enumerate(providers):
+        provider_target = target / f"provider-{index}-{provider}"
         try:
+            provider_target.mkdir(parents=True, exist_ok=True)
             if provider == "supabase":
-                return supabase_resolver_download(workshop_id, target)
-            if provider == "swdl":
-                return steamworkshopdownloader_download(workshop_id, target)
-            if provider == "ggnetwork":
-                return ggnetwork_download(workshop_id, target)
-            if provider == "steamcmd":
-                return steamcmd_download(workshop_id, target)
-            errors.append(f"{provider}: unknown provider")
+                content = supabase_resolver_download(workshop_id, provider_target)
+            elif provider == "swdl":
+                content = steamworkshopdownloader_download(workshop_id, provider_target)
+            elif provider == "ggnetwork":
+                content = ggnetwork_download(workshop_id, provider_target)
+            elif provider == "steamcmd":
+                content = steamcmd_download(workshop_id, provider_target)
+            else:
+                raise RuntimeError("unknown provider")
+            validated = validate_workshop_content(content)
+            print(
+                f"[lumaforge] provider={provider} accepted kind={validated['kind']} "
+                f"path={validated['path']}",
+                flush=True,
+            )
+            return content, validated
         except Exception as exc:
+            print(f"[lumaforge] provider={provider} rejected: {exc}", flush=True)
             errors.append(f"{provider}: {exc}")
     raise RuntimeError("All Workshop acquisition providers failed: " + " | ".join(errors))
+
+
 def ffmpeg_image_to_mp4(image, output):
     run([
         "ffmpeg", "-y", "-loop", "1", "-i", str(image),
         "-t", "3", "-r", "30",
         "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-        "-movflags", "+faststart", str(output)
+        "-movflags", "+faststart", str(output),
     ], timeout=180)
 
 
@@ -352,7 +453,7 @@ def ffmpeg_gif_to_mp4(source, output):
         "ffmpeg", "-y", "-i", str(source),
         "-vf", "fps=30,scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-        "-movflags", "+faststart", str(output)
+        "-movflags", "+faststart", str(output),
     ], timeout=900)
 
 
@@ -363,241 +464,60 @@ def ffmpeg_video_to_mp4(source, output):
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
         "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
         "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
-        "-movflags", "+faststart", str(output)
+        "-movflags", "+faststart", str(output),
     ], timeout=900)
 
 
-def find_signature(data, sig, start=0):
-    return data.find(sig, start)
+def validate_output(path):
+    if not path.is_file() or path.stat().st_size < 1024 * 10:
+        raise RuntimeError("FFmpeg produced an implausibly small MP4")
+    width, height, duration = ffprobe_media(path)
+    if width < MIN_MEDIA_DIMENSION or height < MIN_MEDIA_DIMENSION:
+        raise RuntimeError(f"Rendered MP4 is only {width}x{height}")
+    if duration < 0.5:
+        raise RuntimeError("Rendered MP4 is too short")
+    return width, height, duration
 
 
-def rle_decode(data, expected):
-    out = bytearray()
-    i = 0
-    while i < len(data) and len(out) < expected:
-        control = data[i]
-        i += 1
-        if control & 0x80:
-            count = (control & 0x7f) + 1
-            if i >= len(data):
-                break
-            out.extend(bytes([data[i]]) * min(count, expected - len(out)))
-            i += 1
-        else:
-            count = control + 1
-            out.extend(data[i:i + min(count, expected - len(out))])
-            i += count
-    return bytes(out)
+SCENE_RENDERER = os.getenv("SCENE_RENDERER", "/app/scene_renderer.mjs")
+SCENE_RENDER_WIDTH = int(os.getenv("SCENE_RENDER_WIDTH", "1280"))
+SCENE_RENDER_HEIGHT = int(os.getenv("SCENE_RENDER_HEIGHT", "720"))
+SCENE_RENDER_SECONDS = int(os.getenv("SCENE_RENDER_SECONDS", "6"))
+SCENE_RENDER_FPS = int(os.getenv("SCENE_RENDER_FPS", "30"))
 
 
-def write_tex_as_png(data, output):
-    if len(data) < 32 or data[:4] != b"TEXV":
-        return False
-    texb = data.find(b"TEXB")
-    if texb < 0:
-        return False
-    width = int.from_bytes(data[0x22:0x26], "little")
-    height = int.from_bytes(data[0x26:0x2a], "little")
-    if not (1 <= width <= 16384 and 1 <= height <= 16384):
-        return False
-
-    pos = data.find(width.to_bytes(4, "little") + height.to_bytes(4, "little"), texb)
-    if pos < 0:
-        return False
-
-    try:
-        from PIL import Image
-    except ImportError:
-        return False
-
-    w, h = width, height
-    for _ in range(8):
-        if pos + 20 > len(data):
-            break
-        rw = int.from_bytes(data[pos:pos+4], "little")
-        rh = int.from_bytes(data[pos+4:pos+8], "little")
-        size = int.from_bytes(data[pos+16:pos+20], "little")
-        if rw != w or rh != h or size <= 0 or pos + 20 + size > len(data):
-            break
-        payload = data[pos+20:pos+20+size]
-        if payload.startswith(b"\x89PNG\r\n\x1a\n"):
-            output.write_bytes(payload)
-            return True
-        if payload.startswith(b"\xff\xd8\xff"):
-            output.write_bytes(payload)
-            return True
-        raw = rle_decode(payload, w * h * 4)
-        if len(raw) == w * h * 4:
-            try:
-                Image.frombytes("RGBA", (w, h), raw, "raw", "BGRA").save(output, "PNG")
-                return True
-            except Exception:
-                pass
-        pos += 20 + size
-        w = max(1, w // 2)
-        h = max(1, h // 2)
-    return False
-
-def extract_pkg(pkg, out_dir):
-    data = pkg.read_bytes()
-    if len(data) < 8:
-        return []
-    cursor = 0
-
-    def u32():
-        nonlocal cursor
-        if cursor + 4 > len(data):
-            raise ValueError("bad package")
-        v = int.from_bytes(data[cursor:cursor+4], "little")
-        cursor += 4
-        return v
-
-    def string():
-        nonlocal cursor
-        n = u32()
-        if n < 0 or cursor + n > len(data):
-            raise ValueError("bad package string")
-        s = data[cursor:cursor+n].rstrip(b"\0").decode("utf-8", "ignore")
-        cursor += n
-        return s
-
-    try:
-        root = string()
-        if not root.startswith("PKGV"):
-            return []
-        count = u32()
-        if count > 1_000_000:
-            return []
-        entries = []
-        for _ in range(count):
-            name, offset, length = string(), u32(), u32()
-            entries.append((name, offset, length))
-        payload = cursor
-    except Exception:
-        return []
-
-    outputs = []
-    for name, offset, length in sorted(entries, key=lambda x: x[2], reverse=True):
-        start, end = payload + offset, payload + offset + length
-        if start < payload or end > len(data) or end < start:
-            continue
-        blob = data[start:end]
-        lower = name.lower()
-        ext = Path(name).suffix.lower()
-
-        if ext in {".mp4", ".mov", ".m4v", ".webm"}:
-            p = out_dir / (uuid.uuid4().hex + ext)
-            p.write_bytes(blob)
-            outputs.append(p)
-            return outputs
-
-    for name, offset, length in sorted(entries, key=lambda x: x[2], reverse=True):
-        start, end = payload + offset, payload + offset + length
-        if start < payload or end > len(data) or end < start:
-            continue
-        blob = data[start:end]
-        lower = name.lower()
-        if lower.endswith(".tex"):
-            p = out_dir / (uuid.uuid4().hex + ".png")
-            if write_tex_as_png(blob, p):
-                outputs.append(p)
-                return outputs
-        if blob.startswith(b"\x89PNG\r\n\x1a\n"):
-            p = out_dir / (uuid.uuid4().hex + ".png")
-            p.write_bytes(blob)
-            outputs.append(p)
-            return outputs
-        if blob.startswith(b"\xff\xd8\xff"):
-            p = out_dir / (uuid.uuid4().hex + ".jpg")
-            p.write_bytes(blob)
-            outputs.append(p)
-            return outputs
-    return outputs
-
-
-def safe_extract_zip(archive, target):
-    root = target.resolve()
-    infos = archive.infolist()
-    if len(infos) > MAX_ZIP_ENTRIES:
-        raise RuntimeError("Workshop ZIP contains too many entries")
-    total_size = 0
-    for info in infos:
-        if info.file_size < 0:
-            raise RuntimeError("Workshop ZIP contains an invalid entry")
-        total_size += info.file_size
-        if total_size > MAX_EXTRACTED_BYTES:
-            raise RuntimeError("Workshop ZIP expands beyond the server extraction limit")
-        destination = (target / info.filename).resolve()
-        if destination != root and root not in destination.parents:
-            raise RuntimeError("Unsafe ZIP entry")
-    for info in infos:
-        archive.extract(info, target)
-
-
-def locate_source(content, scratch):
-    video_exts = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi", ".wmv"}
-    image_exts = {".png", ".jpg", ".jpeg", ".webp"}
-    preview_names = {
-        "preview.jpg", "preview.jpeg", "preview.png",
-        "thumbnail.jpg", "thumbnail.jpeg", "thumbnail.png",
-        "cover.jpg", "cover.png"
-    }
-    files = [p for p in content.rglob("*") if p.is_file()]
-
-    # Native video is already the actual wallpaper media.
-    videos = [p for p in files if p.suffix.lower() in video_exts]
-    if videos:
-        return videos[0]
-
-    # ZIPs may contain a complete Workshop project.
-    zips = [p for p in files if p.suffix.lower() == ".zip"]
-    for archive_path in zips:
-        target = scratch / ("zip-" + uuid.uuid4().hex)
-        target.mkdir()
-        try:
-            with zipfile.ZipFile(archive_path) as archive:
-                safe_extract_zip(archive, target)
-            found = locate_source(target, scratch)
-            if found:
-                return found
-        except zipfile.BadZipFile:
-            continue
-
-    # PKG is the native scene container. Never silently replace it with
-    # preview.jpg when its actual assets cannot be decoded.
-    pkgs = [p for p in files if p.suffix.lower() == ".pkg" or p.name.lower().endswith(".pkg")]
-    for pkg in pkgs:
-        pkg_dir = scratch / ("pkg-" + uuid.uuid4().hex)
-        pkg_dir.mkdir(parents=True, exist_ok=True)
-        found = extract_pkg(pkg, pkg_dir)
-        if found:
-            return found[0]
-    if pkgs:
-        raise RuntimeError(
-            "This Wallpaper Engine scene.pkg could not be rendered by the server. "
-            "The preview image was not used as a substitute."
-        )
-
-    # Standalone animated GIFs and ordinary image wallpapers are supported.
-    gifs = [p for p in files if p.suffix.lower() == ".gif" and p.name.lower() not in preview_names]
-    if gifs:
-        return gifs[0]
-
-    images = [
-        p for p in files
-        if p.suffix.lower() in image_exts and p.name.lower() not in preview_names
+def find_scene_pkg(content):
+    candidates = [
+        p for p in content.rglob("scene.pkg")
+        if p.is_file() and p.stat().st_size >= 1024
     ]
-    if images:
-        return images[0]
+    return max(candidates, key=lambda p: p.stat().st_size) if candidates else None
 
-    # Preview-only downloads are metadata, not the wallpaper itself.
-    if any(p.name.lower() in preview_names for p in files):
-        raise RuntimeError(
-            "The Workshop item only exposed preview media; the actual wallpaper "
-            "content was not available for conversion."
-        )
 
-    raise RuntimeError("No supported wallpaper media was found in the Workshop package")
+def stage_scene_project(pkg, scratch):
+    project = next(pkg.parent.rglob("project.json"), None)
+    staged_pkg = scratch / "scene.pkg"
+    shutil.copy2(pkg, staged_pkg)
+    if project:
+        shutil.copy2(project, scratch / "project.json")
+    return staged_pkg
+
+
+def render_scene_pkg_to_mp4(pkg, output, scratch):
+    if not Path(SCENE_RENDERER).is_file():
+        raise RuntimeError("Server scene renderer is not installed")
+    if shutil.which("node") is None:
+        raise RuntimeError("Server scene renderer requires Node.js")
+    staged = stage_scene_project(pkg, scratch)
+    webm = scratch / ("scene-" + uuid.uuid4().hex + ".webm")
+    run([
+        "node", SCENE_RENDERER, str(staged), str(webm),
+        str(SCENE_RENDER_WIDTH), str(SCENE_RENDER_HEIGHT),
+        str(SCENE_RENDER_SECONDS), str(SCENE_RENDER_FPS),
+    ], timeout=max(600, SCENE_RENDER_SECONDS * 120))
+    if not webm.is_file() or webm.stat().st_size < 1024:
+        raise RuntimeError("Scene renderer produced no usable video")
+    ffmpeg_video_to_mp4(webm, output)
 
 
 def process_job(job_id, workshop_id):
@@ -609,23 +529,27 @@ def process_job(job_id, workshop_id):
         try:
             work.mkdir(parents=True, exist_ok=True)
             scratch.mkdir(parents=True, exist_ok=True)
-            set_job(job_id, status="downloading", progress=15)
-            content = acquire_workshop(workshop_id, download_dir)
-            set_job(job_id, status="converting", progress=60)
-            source = locate_source(content, scratch)
-            if source.suffix.lower() in {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi", ".wmv"}:
-                ffmpeg_video_to_mp4(source, output)
-            elif source.suffix.lower() == ".gif":
-                ffmpeg_gif_to_mp4(source, output)
+            set_job(job_id, status="downloading", progress=10)
+            content, validated = acquire_workshop(workshop_id, download_dir)
+            set_job(job_id, status="converting", progress=55, source_kind=validated["kind"])
+
+            if validated["kind"] == "scene":
+                render_scene_pkg_to_mp4(validated["path"], output, scratch)
+            elif validated["kind"] == "video":
+                ffmpeg_video_to_mp4(validated["path"], output)
+            elif validated["kind"] == "gif":
+                ffmpeg_gif_to_mp4(validated["path"], output)
             else:
-                ffmpeg_image_to_mp4(source, output)
-            if not output.is_file() or output.stat().st_size < 1024:
-                raise RuntimeError("FFmpeg produced an invalid MP4")
-            set_job(job_id, status="completed", progress=100,
-                    filename=output.name,
-                    download_url=f"{PUBLIC_BASE_URL}/v1/files/{output.name}" if PUBLIC_BASE_URL else None)
+                ffmpeg_image_to_mp4(validated["path"], output)
+
+            width, height, duration = validate_output(output)
+            set_job(
+                job_id, status="completed", progress=100,
+                filename=output.name,
+                width=width, height=height, duration=duration,
+                download_url=f"{PUBLIC_BASE_URL}/v1/files/{output.name}" if PUBLIC_BASE_URL else None,
+            )
         except subprocess.TimeoutExpired:
-            print(f"[lumaforge] job {job_id} timed out for workshop {workshop_id}", flush=True)
             set_job(job_id, status="failed", progress=100, error="Server conversion timed out")
         except Exception as exc:
             print(f"[lumaforge] job {job_id} failed for workshop {workshop_id}: {exc}", flush=True)
@@ -635,7 +559,8 @@ def process_job(job_id, workshop_id):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "LumaForgeServer/3.0"
+    server_version = "LumaForgeServer/4.0"
+
     def json(self, status, payload):
         body = json.dumps(payload).encode()
         self.send_response(status)
@@ -663,19 +588,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.json(400, {"error": "Invalid JSON"})
 
         with jobs_lock:
-            live_jobs = sum(
+            live = sum(
                 1 for job in jobs.values()
                 if job.get("status") in {"queued", "downloading", "converting"}
             )
-            if live_jobs >= MAX_MEMORY_JOBS:
+            if live >= MAX_MEMORY_JOBS:
                 return self.json(429, {"error": "Too many jobs are currently queued."})
-
-        job_id = uuid.uuid4().hex
-        with jobs_lock:
+            job_id = uuid.uuid4().hex
             jobs[job_id] = {
                 "job_id": job_id, "id": job_id, "workshop_id": workshop_id,
-                "status": "queued", "progress": 0,
-                "created_at": int(time.time())
+                "status": "queued", "progress": 0, "created_at": int(time.time()),
             }
         threading.Thread(target=process_job, args=(job_id, workshop_id), daemon=True).start()
         return self.json(202, {"job_id": job_id, "status": "queued"})
@@ -684,39 +606,28 @@ class Handler(BaseHTTPRequestHandler):
         cleanup()
         parsed = urlparse(self.path)
         path = parsed.path
-
         if path == "/v1/auth/steam/callback":
-            query = parsed.query
-            if not query:
+            if not parsed.query:
                 return self.json(400, {"error": "Missing Steam OpenID callback parameters"})
-            location = "lumaforge://steam-callback?" + query
             self.send_response(302)
-            self.send_header("Location", location)
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Location", "lumaforge://steam-callback?" + parsed.query)
             self.end_headers()
             return
-
         if path == "/health":
             return self.json(200, {
-                "ok": True,
-                "service": "lumaforge",
-                "version": "3.0",
-                "providers": WORKSHOP_PROVIDER,
-                "converter": "ffmpeg",
+                "ok": True, "service": "lumaforge", "version": "4.0",
+                "providers": WORKSHOP_PROVIDER, "converter": "ffmpeg",
+                "scene_renderer": Path(SCENE_RENDERER).is_file(),
                 "server_side_only": True,
-                "git_commit": os.getenv("RENDER_GIT_COMMIT", "")
+                "git_commit": os.getenv("RENDER_GIT_COMMIT", ""),
             })
-
         if path.startswith("/v1/jobs/"):
             if not self.authorized():
                 return self.json(401, {"error": "Unauthorized"})
             job_id = path.rsplit("/", 1)[-1]
             with jobs_lock:
                 job = jobs.get(job_id)
-            if not job:
-                return self.json(404, {"error": "Job not found"})
-            return self.json(200, job)
-
+            return self.json(200, job) if job else self.json(404, {"error": "Job not found"})
         if path.startswith("/v1/files/"):
             if not self.authorized():
                 return self.json(401, {"error": "Unauthorized"})
@@ -736,7 +647,6 @@ class Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 pass
             return
-
         return self.json(404, {"error": "Not found"})
 
     def do_DELETE(self):
@@ -762,87 +672,13 @@ class Handler(BaseHTTPRequestHandler):
         return self.json(200, {"ok": True})
 
     def log_message(self, fmt, *args):
-        print(f"[lumaforge] {self.address_string()} {fmt % args}")
-
-SCENE_RENDERER = os.getenv("SCENE_RENDERER", "/app/scene_renderer.mjs")
-SCENE_RENDER_WIDTH = int(os.getenv("SCENE_RENDER_WIDTH", "1280"))
-SCENE_RENDER_HEIGHT = int(os.getenv("SCENE_RENDER_HEIGHT", "720"))
-SCENE_RENDER_SECONDS = int(os.getenv("SCENE_RENDER_SECONDS", "6"))
-SCENE_RENDER_FPS = int(os.getenv("SCENE_RENDER_FPS", "30"))
-
-
-def find_scene_pkg(content):
-    candidates = [
-        p for p in content.rglob("scene.pkg")
-        if p.is_file()
-    ]
-    if candidates:
-        return max(candidates, key=lambda p: p.stat().st_size)
-    candidates = [
-        p for p in content.rglob("*.pkg")
-        if p.is_file() and p.name.lower() == "scene.pkg"
-    ]
-    return max(candidates, key=lambda p: p.stat().st_size) if candidates else None
-
-
-def render_scene_pkg_to_mp4(pkg, output, scratch):
-    if not Path(SCENE_RENDERER).is_file():
-        raise RuntimeError("Server scene renderer is not installed")
-    if shutil.which("node") is None:
-        raise RuntimeError("Server scene renderer requires Node.js")
-    webm = scratch / ("scene-" + uuid.uuid4().hex + ".webm")
-    run([
-        "node", SCENE_RENDERER, str(pkg), str(webm),
-        str(SCENE_RENDER_WIDTH), str(SCENE_RENDER_HEIGHT),
-        str(SCENE_RENDER_SECONDS), str(SCENE_RENDER_FPS)
-    ], timeout=max(600, SCENE_RENDER_SECONDS * 120))
-    if not webm.is_file() or webm.stat().st_size < 1024:
-        raise RuntimeError("Scene renderer produced no usable video")
-    ffmpeg_video_to_mp4(webm, output)
-    return output
-
-
-def process_job(job_id, workshop_id):
-    with slots:
-        work = ROOT / ("job-" + job_id)
-        download_dir = work / "steam"
-        scratch = work / "scratch"
-        output = ROOT / (job_id + ".mp4")
-        try:
-            work.mkdir(parents=True, exist_ok=True)
-            scratch.mkdir(parents=True, exist_ok=True)
-            set_job(job_id, status="downloading", progress=15)
-            content = acquire_workshop(workshop_id, download_dir)
-            set_job(job_id, status="converting", progress=60)
-
-            scene_pkg = find_scene_pkg(content)
-            if scene_pkg is not None:
-                print(f"[lumaforge] rendering scene.pkg for workshop {workshop_id}: {scene_pkg}", flush=True)
-                render_scene_pkg_to_mp4(scene_pkg, output, scratch)
-            else:
-                source = locate_source(content, scratch)
-                if source.suffix.lower() in {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi", ".wmv"}:
-                    ffmpeg_video_to_mp4(source, output)
-                elif source.suffix.lower() == ".gif":
-                    ffmpeg_gif_to_mp4(source, output)
-                else:
-                    ffmpeg_image_to_mp4(source, output)
-
-            if not output.is_file() or output.stat().st_size < 1024:
-                raise RuntimeError("FFmpeg produced an invalid MP4")
-            set_job(job_id, status="completed", progress=100,
-                    filename=output.name,
-                    download_url=f"{PUBLIC_BASE_URL}/v1/files/{output.name}" if PUBLIC_BASE_URL else None)
-        except subprocess.TimeoutExpired:
-            print(f"[lumaforge] job {job_id} timed out for workshop {workshop_id}", flush=True)
-            set_job(job_id, status="failed", progress=100, error="Server conversion timed out")
-        except Exception as exc:
-            print(f"[lumaforge] job {job_id} failed for workshop {workshop_id}: {exc}", flush=True)
-            set_job(job_id, status="failed", progress=100, error=str(exc))
-        finally:
-            shutil.rmtree(work, ignore_errors=True)
+        print(f"[lumaforge] {self.address_string()} {fmt % args}", flush=True)
 
 
 if __name__ == "__main__":
-    print(f"[lumaforge] starting on {HOST}:{PORT}; steamcmd={STEAMCMD}; root={ROOT}", flush=True)
+    print(
+        f"[lumaforge] starting on {HOST}:{PORT}; providers={WORKSHOP_PROVIDER}; "
+        f"root={ROOT}",
+        flush=True,
+    )
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
