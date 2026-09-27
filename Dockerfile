@@ -74,6 +74,7 @@ RUN printf '#!/bin/sh\nexec /usr/share/dotnet/dotnet /opt/depotdownloader/DepotD
 WORKDIR /app
 COPY server/lumaforge-server.py /app/lumaforge-server.py
 COPY server/scene_renderer.mjs /app/scene_renderer.mjs
+COPY server/patch_lwe_sources.py /app/patch_lwe_sources.py
 COPY server/linux_wallpaperengine_renderer.py /app/linux_wallpaperengine_renderer.py
 EXPOSE 8080
 CMD ["python3", "/app/lumaforge-server.py"]
