@@ -97,7 +97,10 @@ class WorkerTests(unittest.TestCase):
             target = Path(tmp)
             content = target / "steamapps" / "workshop" / "content" / SERVER.APP_ID / "3714599577"
             content.mkdir(parents=True)
-            with patch.dict("os.environ", {"STEAM_USERNAME": "", "STEAM_PASSWORD": ""}, clear=False),                  patch.object(SERVER, "DEPOT_DOWNLOADER", "/opt/depotdownloader/DepotDownloader"),                  patch.object(SERVER, "run", return_value="downloaded") as run_mock:
+            with patch.dict("os.environ", {"STEAM_USERNAME": "", "STEAM_PASSWORD": ""}, clear=False), \
+                 patch.object(SERVER, "DEPOT_DOWNLOADER", "/opt/depotdownloader/DepotDownloader"), \
+                 patch.object(SERVER.Path, "is_file", return_value=True), \
+                 patch.object(SERVER, "run", return_value="downloaded") as run_mock:
                 result = SERVER.depotdownloader_download("3714599577", target)
             self.assertEqual(result, content)
             command = run_mock.call_args.args[0]
