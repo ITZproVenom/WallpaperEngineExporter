@@ -363,15 +363,26 @@ def steamworkshopdownloader_download(workshop_id, target):
 
 
 def steamcmd_download(workshop_id, target):
+    username = os.environ.get("STEAM_USERNAME", "").strip()
+    password = os.environ.get("STEAM_PASSWORD", "")
+    guard = os.environ.get("STEAM_GUARD_CODE", "").strip()
+    if username and password:
+        login = ["+login", username, password]
+        if guard:
+            login.append(guard)
+    else:
+        login = ["+login", "anonymous"]
+
     run_output = run([
         STEAMCMD, "+@ShutdownOnFailedCommand", "1",
         "+@NoPromptForPassword", "1", "+force_install_dir", str(target),
-        "+login", "anonymous", "+workshop_download_item", APP_ID, workshop_id,
+        *login, "+workshop_download_item", APP_ID, workshop_id,
         "+quit",
     ], timeout=600)
     content = target / "steamapps" / "workshop" / "content" / APP_ID / workshop_id
     if not content.is_dir():
-        raise RuntimeError("SteamCMD returned no Workshop content; output=" + run_output[-2500:])
+        mode = "authenticated" if username and password else "anonymous"
+        raise RuntimeError(f"SteamCMD {mode} download failed; output=" + run_output[-5000:])
     return content
 
 
