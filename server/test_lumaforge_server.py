@@ -92,6 +92,20 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual(result["kind"], "image")
             self.assertEqual(result["path"].name, "wallpaper.jpg")
 
+    def test_depotdownloader_builds_anonymous_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            content = target / "steamapps" / "workshop" / "content" / SERVER.APP_ID / "3714599577"
+            content.mkdir(parents=True)
+            with patch.dict("os.environ", {"STEAM_USERNAME": "", "STEAM_PASSWORD": ""}, clear=False),                  patch.object(SERVER, "DEPOT_DOWNLOADER", "/opt/depotdownloader/DepotDownloader"),                  patch.object(SERVER, "run", return_value="downloaded") as run_mock:
+                result = SERVER.depotdownloader_download("3714599577", target)
+            self.assertEqual(result, content)
+            command = run_mock.call_args.args[0]
+            self.assertIn("-pubfile", command)
+            self.assertIn("3714599577", command)
+            self.assertNotIn("-username", command)
+            self.assertNotIn("-password", command)
+
     def test_scene_pkg_is_preferred_over_preview(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "content"
