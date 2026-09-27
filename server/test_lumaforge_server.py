@@ -4,6 +4,7 @@ import unittest
 import urllib.request
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location(
     "lumaforge_server",
@@ -66,17 +67,17 @@ class WorkerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "content"
             root.mkdir()
-            from PIL import Image
-            Image.new("RGB", (16, 16), (120, 120, 120)).save(root / "workshop.png")
-            with self.assertRaisesRegex(RuntimeError, "no usable"):
-                SERVER.validate_workshop_content(root)
+            image = root / "workshop.png"
+            image.write_bytes(b"placeholder")
+            with patch.object(SERVER, "image_dimensions", return_value=(16, 16)):
+                with self.assertRaisesRegex(RuntimeError, "no usable"):
+                    SERVER.validate_workshop_content(root)
 
     def test_preview_only_download_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "content"
             root.mkdir()
-            from PIL import Image
-            Image.new("RGB", (1920, 1080), (120, 120, 120)).save(root / "preview.jpg")
+            (root / "preview.jpg").write_bytes(b"preview")
             with self.assertRaisesRegex(RuntimeError, "preview-only"):
                 SERVER.validate_workshop_content(root)
 
@@ -84,9 +85,10 @@ class WorkerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "content"
             root.mkdir()
-            from PIL import Image
-            Image.new("RGB", (1920, 1080), (120, 120, 120)).save(root / "wallpaper.jpg")
-            result = SERVER.validate_workshop_content(root)
+            image = root / "wallpaper.jpg"
+            image.write_bytes(b"wallpaper")
+            with patch.object(SERVER, "image_dimensions", return_value=(1920, 1080)):
+                result = SERVER.validate_workshop_content(root)
             self.assertEqual(result["kind"], "image")
             self.assertEqual(result["path"].name, "wallpaper.jpg")
 
@@ -95,20 +97,17 @@ class WorkerTests(unittest.TestCase):
             root = Path(tmp) / "content"
             root.mkdir()
             (root / "scene.pkg").write_bytes(b"x" * 4096)
-            from PIL import Image
-            Image.new("RGB", (16, 16), (120, 120, 120)).save(root / "preview.jpg")
+            (root / "preview.jpg").write_bytes(b"preview")
             result = SERVER.validate_workshop_content(root)
             self.assertEqual(result["kind"], "scene")
             self.assertEqual(result["path"].name, "scene.pkg")
 
-    def test_locate_source_no_longer_accepts_preview_fallback(self):
+    def test_preview_only_error_is_explicit(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "content"
-            scratch = Path(tmp) / "scratch"
             root.mkdir()
-            scratch.mkdir()
             (root / "preview.jpg").write_bytes(b"preview")
-            with self.assertRaisesRegex(RuntimeError, "preview media"):
+            with self.assertRaisesRegex(RuntimeError, "preview-only media"):
                 SERVER.validate_workshop_content(root)
 
 
