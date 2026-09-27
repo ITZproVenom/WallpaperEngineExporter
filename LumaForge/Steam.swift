@@ -5,7 +5,11 @@ import UIKit
 
 struct SteamOpenID {
     static let endpoint = "https://steamcommunity.com/openid/login"
-    static let callbackBase = "https://lumaforge-worker.onrender.com/v1/auth/steam/callback"
+    /// Static GitHub Pages redirect. Steam requires an https return_to, but it
+    /// only has to hand the response back to the app, so a page in this
+    /// repository does the job with no server to deploy or pay for.
+    static let callbackBase =
+        "https://itzprovenom.github.io/WallpaperEngineExporter/steam-callback/"
 
     static func steamID(from callback: URL, expectedState: String) -> String? {
         guard let components = URLComponents(url: callback, resolvingAgainstBaseURL: false) else { return nil }
@@ -98,7 +102,7 @@ final class SteamSession: NSObject, ObservableObject, ASWebAuthenticationPresent
                 realm.scheme = callback.url?.scheme
                 realm.host = callback.url?.host
                 realm.port = callback.url?.port
-                return realm.url?.absoluteString ?? "https://lumaforge-worker.onrender.com/"
+                return realm.url?.absoluteString ?? "https://itzprovenom.github.io/"
             }()),
             .init(name: "openid.identity", value: "http://specs.openid.net/auth/2.0/identifier_select"),
             .init(name: "openid.claimed_id", value: "http://specs.openid.net/auth/2.0/identifier_select")

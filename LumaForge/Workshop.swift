@@ -5,10 +5,26 @@ import WebKit
 @MainActor
 final class WorkshopStore: ObservableObject {
     @Published private(set) var items: [WorkshopItem] = []
+    @Published private(set) var metadata: [String: WorkshopMetadata] = [:]
     @Published var query = ""
     @Published private(set) var loading = false
     @Published var error: String?
     private let appID = "431960"
+    private let metadataService = SteamMetadataService()
+
+    /// Enrich the listed items with Steam's public metadata, which reveals the
+    /// wallpaper type (and therefore the expected export fidelity) without
+    /// downloading anything.
+    func loadMetadata() async {
+        let ids = items.map(\.id)
+        guard !ids.isEmpty else { return }
+        do {
+            let found = try await metadataService.describe(workshopIDs: ids)
+            metadata = found
+        } catch {
+            self.error = "Could not load Workshop details: " + error.localizedDescription
+        }
+    }
 
     func search() async {
         await fetch(url: workshopURL(query: query))

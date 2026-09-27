@@ -1,7 +1,9 @@
 name: LumaForge CI
+
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -10,180 +12,207 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  ios:
+    name: iOS build and tests
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
+
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_26.4.1.app
+
+      - name: Show toolchain
+        run: xcodebuild -version && swift --version
+
+      - name: Pick a simulator
+        id: sim
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Device names change between Xcode releases, so resolve one at runtime
+          # instead of hardcoding a model that may not exist on the runner.
+          UDID="$(xcrun simctl list devices available --json \
+            | python3 -c "
+          import json, sys
+          devices = json.load(sys.stdin)['devices']
+          best = None
+          for runtime, entries in devices.items():
+              if 'iOS' not in runtime:
+                  continue
+              for device in entries:
+                  if not device.get('isAvailable'):
+                      continue
+                  name = device.get('name', '')
+                  if 'iPhone' in name:
+                      best = best or device['udid']
+          print(best or '')
+          ")"
+          test -n "$UDID"
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$UDID" || true
+
+      - name: Run unit tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project LumaForge.xcodeproj \
+            -scheme LumaForge \
+            -sdk iphonesimulator \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+
       - name: Build archive
         run: |
-          xcodebuild -project LumaForge.xcodeproj -scheme LumaForge -sdk iphoneos -configuration Release -archivePath build/LumaForge.xcarchive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO archive
-      - name: Build XCTest bundle
-        run: |
-          xcodebuild build-for-testing -project LumaForge.xcodeproj -scheme LumaForge -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+          xcodebuild -project LumaForge.xcodeproj -scheme LumaForge \
+            -sdk iphoneos -configuration Release \
+            -archivePath build/LumaForge.xcarchive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO archive
+
       - name: Package unsigned IPA
         run: |
+          set -euo pipefail
           mkdir -p build/Payload
           cp -R build/LumaForge.xcarchive/Products/Applications/LumaForge.app build/Payload/
-          test -f build/Payload/LumaForge.app/Info.plist
-          test -f build/Payload/LumaForge.app/Assets.car
-          test -x build/Payload/LumaForge.app/LumaForge
-          test "$(stat -f%z build/Payload/LumaForge.app/LumaForge)" -gt 100000
+          APP=build/Payload/LumaForge.app
+          test -f "$APP/Info.plist"
+          test -f "$APP/Assets.car"
+          test -x "$APP/LumaForge"
+          test "$(stat -f%z "$APP/LumaForge")" -gt 100000
+          # Photos usage string is required or the export flow crashes on save.
+          /usr/libexec/PlistBuddy -c 'Print :NSPhotoLibraryAddUsageDescription' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist"
           cd build
           zip -qry LumaForge-unsigned.ipa Payload
           unzip -t LumaForge-unsigned.ipa >/dev/null
           test -s LumaForge-unsigned.ipa
+          shasum -a 256 LumaForge-unsigned.ipa | tee LumaForge-unsigned.ipa.sha256
+
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: LumaForge-unsigned-ipa
-          path: build/LumaForge-unsigned.ipa
+          path: |
+            build/LumaForge-unsigned.ipa
+            build/LumaForge-unsigned.ipa.sha256
           if-no-files-found: error
 
-  server-check:
+  pipeline:
+    name: Processing pipeline
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate server Python
-        run: python3 -m py_compile server/lumaforge-server.py
-      - name: Run server unit tests
-        run: python3 -m unittest discover -s server -p 'test_*.py' -v
-      - name: Test job API contract
-        shell: bash
-        run: |
-          set -euo pipefail
-          ROOT="$(mktemp -d)"
-          PORT=18080 WORK_ROOT="$ROOT" WORKSHOP_PROVIDER=invalid python3 server/lumaforge-server.py >"$ROOT/server.log" 2>&1 &
-          PID=$!
-          trap 'kill "$PID" 2>/dev/null || true; wait "$PID" 2>/dev/null || true; rm -rf "$ROOT"' EXIT
-          for _ in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:18080/health >/dev/null; then break; fi
-            sleep 1
-          done
-          curl -fsS http://127.0.0.1:18080/health | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["ok"] is True; assert x["converter"]=="ffmpeg"'
-          CREATE="$(curl -fsS -X POST http://127.0.0.1:18080/v1/jobs -H "Content-Type: application/json" -d '{"workshop_id":"3592237763"}')"
-          JOB_ID="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["job_id"])' <<<"$CREATE")"
-          test -n "$JOB_ID"
-          curl -fsS "http://127.0.0.1:18080/v1/jobs/$JOB_ID" >"$ROOT/job.json"
-          python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["job_id"]; assert x["status"] in {"queued","downloading","converting","failed","completed"}' <"$ROOT/job.json"
-          CALLBACK="$(curl -fsS -D - -o /dev/null 'http://127.0.0.1:18080/v1/auth/steam/callback?state=ci-test&openid.mode=id_res')"
-          grep -i '^Location: lumaforge://steam-callback?state=ci-test&openid.mode=id_res' <<<"$CALLBACK"
-          test ! -d .github/workflows/release.yml
-          ! grep -R "fswswvhpszebuxnloysy" LumaForge server render.yaml --include='*.swift' --include='*.py' --include='*.yaml' 2>/dev/null
-      - name: Build worker image
-        run: docker build -t lumaforge-worker:test .
-      - name: Verify thin-client boundary
-        run: |
-          ! grep -R "AVFoundation\|AVAssetExportSession\|PackageInspector" LumaForge LumaForge.xcodeproj --include='*.swift' --include='project.pbxproj'
 
-  live-smoke:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [server-check]
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Wait for production worker
-        shell: bash
-        run: |
-          set -euo pipefail
-          EXPECTED_SHA="${GITHUB_SHA}"
-          for _ in $(seq 1 60); do
-            HEALTH="$(curl -fsS --max-time 15 https://lumaforge-worker.onrender.com/health || true)"
-            if python3 -c 'import json,sys; x=json.loads(sys.argv[1]); assert x["ok"] is True; assert x.get("git_commit")==sys.argv[2]' "$HEALTH" "$EXPECTED_SHA"; then
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "Production worker did not deploy commit $EXPECTED_SHA"
-          exit 1
-      - name: Install MP4 validation tools
+      - name: Install FFmpeg
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg
 
-      - name: Run real Workshop conversion
-        shell: bash
+      - name: Compile check
         run: |
-          set -euo pipefail
-          CREATE="$(curl -fsS --max-time 30 -X POST https://lumaforge-worker.onrender.com/v1/jobs \
-            -H 'Content-Type: application/json' \
-            -d '{"workshop_id":"3714599577"}')"
-          JOB_ID="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["job_id"])' <<<"$CREATE")"
-          test -n "$JOB_ID"
-          for _ in $(seq 1 540); do
-            BODY="$(curl -fsS --max-time 30 "https://lumaforge-worker.onrender.com/v1/jobs/$JOB_ID")"
-            STATUS="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["status"])' <<<"$BODY")"
-            case "$STATUS" in
-              completed)
-                FILENAME="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["filename"])' <<<"$BODY")"
-                FILE_URL="https://lumaforge-worker.onrender.com/v1/files/$FILENAME"
-                FETCHED=0
-                for _ in $(seq 1 5); do
-                  if curl -fsS --max-time 180 -o "$RUNNER_TEMP/lumaforge-smoke.mp4" "$FILE_URL"; then
-                    FETCHED=1
-                    break
-                  fi
-                  sleep 2
-                done
-                if [ "$FETCHED" -ne 1 ]; then
-                  echo "Final MP4 fetch failed: $FILE_URL"
-                  echo "$BODY"
-                  curl -sS -i --max-time 30 "$FILE_URL" || true
-                  exit 1
-                fi
-                test -s "$RUNNER_TEMP/lumaforge-smoke.mp4"
-                python3 -c 'from pathlib import Path; p=Path(__import__("sys").argv[1]); d=p.read_bytes(); assert len(d)>1024; assert d[4:8]==b"ftyp"; assert b"mp4" in d[:64]' "$RUNNER_TEMP/lumaforge-smoke.mp4"
-                curl -fsS -X DELETE "https://lumaforge-worker.onrender.com/v1/jobs/$JOB_ID" >/dev/null || true
-                exit 0
-                ;;
-              failed)
-                echo "$BODY"
-                exit 1
-                ;;
-            esac
-            sleep 2
-          done
-          echo "Production Workshop conversion timed out"
-          exit 1
+          python3 -m py_compile server/lumaforge-server.py server/lumaforge_cli.py
+          python3 -m compileall -q server/processing server/acquisition
 
-      - name: Run real scene Workshop conversion
+      - name: Run unit tests
+        run: python3 -m unittest discover -s server -p 'test_*.py' -v
+
+      - name: Acquisition capability report
+        run: python3 server/lumaforge_cli.py capabilities
+
+      - name: End-to-end lossless export
         shell: bash
         run: |
           set -euo pipefail
-          CREATE="$(curl -fsS --max-time 30 -X POST https://lumaforge-worker.onrender.com/v1/jobs \
-            -H 'Content-Type: application/json' \
-            -d '{"workshop_id":"3592237763"}')"
-          JOB_ID="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["job_id"])' <<<"$CREATE")"
-          test -n "$JOB_ID"
-          for _ in $(seq 1 840); do
-            BODY="$(curl -fsS --max-time 30 "https://lumaforge-worker.onrender.com/v1/jobs/$JOB_ID")"
-            STATUS="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["status"])' <<<"$BODY")"
-            case "$STATUS" in
-              completed)
-                FILENAME="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["filename"])' <<<"$BODY")"
-                FILE_URL="https://lumaforge-worker.onrender.com/v1/files/$FILENAME"
-                curl -fsS --max-time 180 -o "$RUNNER_TEMP/lumaforge-scene-smoke.mp4" "$FILE_URL"
-                test -s "$RUNNER_TEMP/lumaforge-scene-smoke.mp4"
-                python3 -c 'from pathlib import Path; p=Path(__import__("sys").argv[1]); d=p.read_bytes(); assert len(d)>1024; assert d[4:8]==b"ftyp"; assert b"mp4" in d[:64]' "$RUNNER_TEMP/lumaforge-scene-smoke.mp4"
-                curl -fsS -X DELETE "https://lumaforge-worker.onrender.com/v1/jobs/$JOB_ID" >/dev/null || true
-                exit 0
-                ;;
-              failed)
-                echo "$BODY"
-                exit 1
-                ;;
-            esac
-            sleep 2
-          done
-          echo "Production scene Workshop conversion timed out"
-          exit 1
+          WORK="$(mktemp -d)"
+          # Build a real MP4, wrap it in a real TEX inside a real PKG, then
+          # export it through the full pipeline and require byte equality.
+          python3 - "$WORK" <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "server")
+          from tests.build_fixtures import make_mp4, make_pkg, make_tex
+
+          work = Path(sys.argv[1])
+          inbox = work / "inbox"
+          inbox.mkdir(parents=True, exist_ok=True)
+          original = make_mp4(work / "original.mp4", seconds=2, size="640x360")
+          (inbox / "3807719502.pkg").write_bytes(
+              make_pkg([
+                  ("materials/video.tex", make_tex(original, 640, 360)),
+                  ("project.json", b'{"type":"video"}'),
+              ])
+          )
+          print("fixture bytes:", len(original))
+          PY
+          LUMAFORGE_INBOX="$WORK/inbox" python3 server/lumaforge_cli.py \
+            run 3807719502 -o "$WORK/export.mp4" | tee "$WORK/result.json"
+          python3 -c "
+          import json, sys
+          result = json.load(open(sys.argv[1]))
+          assert result['strategy'] == 'passthrough', result
+          assert result['fidelity'] == 'identical', result
+          assert result['reencoded'] is False, result
+          " "$WORK/result.json"
+          cmp "$WORK/original.mp4" "$WORK/export.mp4"
+          echo "Export is byte-identical to the original stream."
+
+      - name: Scene packages fail explicitly, never as a silent still
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$(mktemp -d)"
+          python3 - "$WORK" <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "server")
+          from tests.build_fixtures import make_pkg, make_tex
+
+          work = Path(sys.argv[1])
+          (work / "scene.pkg").write_bytes(
+              make_pkg([
+                  ("scene.json", b'{"objects":[]}'),
+                  ("materials/t.tex", make_tex(b"\x07" * 4096, 512, 512)),
+              ])
+          )
+          PY
+          OUTPUT="$(python3 server/lumaforge_cli.py inspect "$WORK/scene.pkg")"
+          echo "$OUTPUT"
+          python3 -c "
+          import json, sys
+          plan = json.loads(sys.stdin.read())
+          assert plan['strategy'] == 'render_scene', plan
+          assert plan['needs_renderer'] is True, plan
+          assert plan['lossless'] is False, plan
+          " <<<"$OUTPUT"
+
+      - name: Worker image builds
+        run: docker build -t lumaforge-worker:test .
+
+      - name: On-device processing is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The app must carry its own pipeline: acquisition may be swapped, but
+          # inspection and lossless export have to work with no server at all.
+          test -f LumaForge/Processing/PkgArchive.swift
+          test -f LumaForge/Processing/TexTexture.swift
+          test -f LumaForge/Processing/PackageInspector.swift
+          test -f LumaForge/Processing/ExportPipeline.swift
+          grep -q "PkgArchive" LumaForge/Processing/PackageInspector.swift
+          grep -q "AVAssetWriter" LumaForge/Processing/ExportPipeline.swift
+          # Processing must not reach into acquisition, or the split is fiction.
+          ! grep -rn "SteamMetadataService\|AcquisitionRegistry\|WorkerSource" \
+              LumaForge/Processing/
+          # No dead worker URL may remain anywhere in the shipped app.
+          ! grep -rn "lumaforge-worker.onrender.com" LumaForge/ server/ render.yaml
 
   release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [build, server-check, live-smoke]
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ios, pipeline]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download IPA artifact
         uses: actions/download-artifact@v4
         with:
@@ -193,7 +222,9 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: lumaforge-build-${{ github.run_number }}
-          name: LumaForge Build ${{ github.run_number }}
+          tag_name: ${{ github.ref_name }}
+          name: LumaForge ${{ github.ref_name }}
           generate_release_notes: true
-          files: release/LumaForge-unsigned.ipa
+          files: |
+            release/LumaForge-unsigned.ipa
+            release/LumaForge-unsigned.ipa.sha256
