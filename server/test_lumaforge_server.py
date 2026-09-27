@@ -1,12 +1,9 @@
-import io
 import importlib.util
-import json
 import tempfile
 import unittest
 import urllib.request
 import zipfile
 from pathlib import Path
-
 
 SPEC = importlib.util.spec_from_file_location(
     "lumaforge_server",
@@ -32,16 +29,11 @@ class WorkerTests(unittest.TestCase):
         request = urllib.request.Request("https://example.com/file")
         with self.assertRaisesRegex(RuntimeError, "unsafe URL"):
             handler.redirect_request(
-                request,
-                None,
-                302,
-                "Found",
-                {},
-                "https://127.0.0.1/private",
+                request, None, 302, "Found", {}, "https://127.0.0.1/private"
             )
 
     def test_workshop_id_validation(self):
-        self.assertTrue(SERVER.ID_RE.fullmatch("3803559783"))
+        self.assertTrue(SERVER.ID_RE.fullmatch("3714599577"))
         self.assertFalse(SERVER.ID_RE.fullmatch("12345"))
         self.assertFalse(SERVER.ID_RE.fullmatch("abc123456"))
         self.assertFalse(SERVER.ID_RE.fullmatch("1" * 21))
@@ -67,22 +59,49 @@ class WorkerTests(unittest.TestCase):
             with zipfile.ZipFile(archive_path) as archive:
                 SERVER.safe_extract_zip(archive, target)
             self.assertEqual(
-                (target / "wallpaper" / "video.mp4").read_bytes(),
-                b"not-real-video",
+                (target / "wallpaper" / "video.mp4").read_bytes(), b"not-real-video"
             )
 
-    def test_locate_source_prefers_real_video_over_preview(self):
+    def test_placeholder_image_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "content"
-            scratch = Path(tmp) / "scratch"
             root.mkdir()
-            scratch.mkdir()
-            (root / "preview.jpg").write_bytes(b"preview")
-            (root / "wallpaper.mp4").write_bytes(b"video")
-            source = SERVER.locate_source(root, scratch)
-            self.assertEqual(source.name, "wallpaper.mp4")
+            from PIL import Image
+            Image.new("RGB", (16, 16), (120, 120, 120)).save(root / "workshop.png")
+            with self.assertRaisesRegex(RuntimeError, "no usable"):
+                SERVER.validate_workshop_content(root)
 
-    def test_locate_source_does_not_export_preview_as_wallpaper(self):
+    def test_preview_only_download_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "content"
+            root.mkdir()
+            from PIL import Image
+            Image.new("RGB", (1920, 1080), (120, 120, 120)).save(root / "preview.jpg")
+            with self.assertRaisesRegex(RuntimeError, "preview-only"):
+                SERVER.validate_workshop_content(root)
+
+    def test_valid_image_is_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "content"
+            root.mkdir()
+            from PIL import Image
+            Image.new("RGB", (1920, 1080), (120, 120, 120)).save(root / "wallpaper.jpg")
+            result = SERVER.validate_workshop_content(root)
+            self.assertEqual(result["kind"], "image")
+            self.assertEqual(result["path"].name, "wallpaper.jpg")
+
+    def test_scene_pkg_is_preferred_over_preview(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "content"
+            root.mkdir()
+            (root / "scene.pkg").write_bytes(b"x" * 4096)
+            from PIL import Image
+            Image.new("RGB", (16, 16), (120, 120, 120)).save(root / "preview.jpg")
+            result = SERVER.validate_workshop_content(root)
+            self.assertEqual(result["kind"], "scene")
+            self.assertEqual(result["path"].name, "scene.pkg")
+
+    def test_locate_source_no_longer_accepts_preview_fallback(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "content"
             scratch = Path(tmp) / "scratch"
@@ -90,27 +109,7 @@ class WorkerTests(unittest.TestCase):
             scratch.mkdir()
             (root / "preview.jpg").write_bytes(b"preview")
             with self.assertRaisesRegex(RuntimeError, "preview media"):
-                SERVER.locate_source(root, scratch)
-
-    def test_locate_source_reports_unsupported_pkg(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / "content"
-            scratch = Path(tmp) / "scratch"
-            root.mkdir()
-            scratch.mkdir()
-            (root / "scene.pkg").write_bytes(b"not-a-pkg")
-            (root / "preview.jpg").write_bytes(b"preview")
-            with self.assertRaisesRegex(RuntimeError, "scene.pkg"):
-                SERVER.locate_source(root, scratch)
-
-    def test_provider_file_rejects_non_media_without_silent_extension_guess(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "download"
-            target = Path(tmp) / "target"
-            target.mkdir()
-            source.write_bytes(b"PKGV-invalid")
-            content = SERVER._materialize_provider_file(source, target)
-            self.assertTrue((content / "workshop.pkg").exists())
+                SERVER.validate_workshop_content(root)
 
 
 if __name__ == "__main__":
