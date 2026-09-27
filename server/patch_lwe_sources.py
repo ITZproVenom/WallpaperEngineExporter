@@ -1,5 +1,4 @@
 from pathlib import Path
-import re
 
 root = Path("/src/linux-wallpaperengine/src/WallpaperEngine")
 
@@ -10,41 +9,52 @@ if "#include <optional>" not in s:
 media.write_text(s)
 
 p = root / "Data/Builders/ColorBuilder.cpp"
-s = p.read_text()
-s = s.replace("#include <format>", "#include <iomanip>\n#include <sstream>", 1)
+lines = p.read_text().splitlines(True)
+out = []
+i = 0
+replacements = 0
 
-three = re.compile(
-    r'number\s*=\s*std::format\s*\(\s*"\{\}\{\}\{\}\{\}\{\}\{:\s*02x\}"\s*,'
-    r'\s*number\.at\s*\(\s*0\s*\)\s*,\s*number\.at\s*\(\s*0\s*\)\s*,'
-    r'\s*number\.at\s*\(\s*1\s*\)\s*,\s*number\.at\s*\(\s*1\s*\)\s*,'
-    r'\s*number\.at\s*\(\s*2\s*\)\s*,\s*number\.at\s*\(\s*2\s*\)\s*,'
-    r'\s*static_cast<int>\s*\(\s*alpha\s*\*\s*255\s*\)\s*\)\s*;',
-    re.S,
-)
-three_replacement = """std::ostringstream expanded;
+while i < len(lines):
+    line = lines[i]
+    if "number = std::format" not in line:
+        out.append(line)
+        i += 1
+        continue
+
+    block = []
+    depth = 0
+    started = False
+    while i < len(lines):
+        part = lines[i]
+        block.append(part)
+        depth += part.count("(") - part.count(")")
+        started = True
+        i += 1
+        if started and depth <= 0 and ");" in part:
+            break
+
+    joined = "".join(block)
+    if "alpha * 255" in joined:
+        replacement = """            std::ostringstream expanded;
             expanded << number.at (0) << number.at (0)
                      << number.at (1) << number.at (1)
                      << number.at (2) << number.at (2)
                      << std::hex << std::setw (2) << std::setfill ('0')
                      << static_cast<int> (alpha * 255);
-            number = expanded.str ();"""
-s, n3 = three.subn(three_replacement, s, count=1)
-
-four = re.compile(
-    r'number\s*=\s*std::format\s*\(\s*"\{\}\{\}\{\}\{\}\{\}\{\}"\s*,'
-    r'\s*number\.at\s*\(\s*0\s*\)\s*,\s*number\.at\s*\(\s*0\s*\)\s*,'
-    r'\s*number\.at\s*\(\s*1\s*\)\s*,\s*number\.at\s*\(\s*1\s*\)\s*,'
-    r'\s*number\.at\s*\(\s*2\s*\)\s*,\s*number\.at\s*\(\s*2\s*\)\s*,'
-    r'\s*number\.at\s*\(\s*3\s*\)\s*,\s*number\.at\s*\(\s*3\s*\)\s*\)\s*;',
-    re.S,
-)
-four_replacement = """number = std::string {
+            number = expanded.str ();
+"""
+    elif "number.at (3)" in joined:
+        replacement = """            number = std::string {
                 number.at (0), number.at (0), number.at (1), number.at (1),
                 number.at (2), number.at (2), number.at (3), number.at (3)
-            };"""
-s, n4 = four.subn(four_replacement, s, count=1)
+            };
+"""
+    else:
+        raise SystemExit("Unsupported ColorBuilder std::format block")
+    out.append(replacement)
+    replacements += 1
 
-if n3 != 1 or n4 != 1 or "std::format" in s:
-    raise SystemExit(f"ColorBuilder compatibility patch failed: three={n3} four={n4} remaining_format={'std::format' in s}")
-
+s = "".join(out).replace("#include <format>", "#include <iomanip>\n#include <sstream>", 1)
+if replacements != 2 or "std::format" in s:
+    raise SystemExit(f"ColorBuilder compatibility patch failed: replacements={replacements} remaining_format={'std::format' in s}")
 p.write_text(s)
