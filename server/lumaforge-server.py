@@ -456,7 +456,9 @@ def acquire_workshop(workshop_id, target):
         provider_target = target / f"provider-{index}-{provider}"
         try:
             provider_target.mkdir(parents=True, exist_ok=True)
-            if provider == "steamapi":\n                content = steam_api_download(workshop_id, provider_target)\n            elif provider == "supabase":
+            if provider == "steamapi":
+                content = steam_api_download(workshop_id, provider_target)
+            elif provider == "supabase":
                 content = supabase_resolver_download(workshop_id, provider_target)
             elif provider == "swdl":
                 content = steamworkshopdownloader_download(workshop_id, provider_target)
