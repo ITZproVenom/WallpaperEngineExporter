@@ -49,7 +49,7 @@ RUN dpkg --add-architecture i386 \
  && apt-get install -y --no-install-recommends \
       ca-certificates curl ffmpeg python3 python3-pil nodejs npm chromium xvfb \
       mesa-utils libgl1-mesa-dri libgl1-mesa-glx libglu1-mesa libglew2.2 libglfw3 \
-      libmpv2 libpulse0 libfftw3-3 libfreetype6 libdbus-1-3 libx11-6 libxrandr2 libxinerama1 \
+      libmpv2 libpulse0 libfftw3-double3 libfreetype6 libdbus-1-3 libx11-6 libxrandr2 libxinerama1 \
       libxcursor1 libxi6 libwayland-client0 libegl1 libgl1 \
       libc6:i386 lib32gcc-s1 \
  && rm -rf /var/lib/apt/lists/* \
