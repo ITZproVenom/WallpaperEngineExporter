@@ -513,6 +513,8 @@ def acquire_workshop(workshop_id, target):
                 content = steamworkshopdownloader_download(workshop_id, provider_target)
             elif provider == "ggnetwork":
                 content = ggnetwork_download(workshop_id, provider_target)
+            elif provider == "depotdownloader":
+                content = depotdownloader_download(workshop_id, provider_target)
             elif provider == "steamcmd":
                 content = steamcmd_download(workshop_id, provider_target)
             else:
