@@ -1,1 +1,75 @@
-<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>LumaForge</string><key>CFBundleDisplayName</key><string>LumaForge</string><key>CFBundleName</key><string>LumaForge</string><key>CFBundleIdentifier</key><string>com.itzprovenom.lumaforge</string><key>CFBundleShortVersionString</key><string>2.0.0</string><key>CFBundleVersion</key><string>2</string><key>LSRequiresIPhoneOS</key><true/><key>UILaunchScreen</key><dict><key>UIColorName</key><string>LaunchBackground</string></dict><key>CFBundleURLTypes</key><array><dict><key>CFBundleURLSchemes</key><array><string>lumaforge</string></array></dict></array></dict></plist>
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>LumaForge</string>
+	<key>CFBundleDisplayName</key>
+	<string>LumaForge</string>
+	<key>CFBundleName</key>
+	<string>LumaForge</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.itzprovenom.lumaforge</string>
+	<key>CFBundleShortVersionString</key>
+	<string>3.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>3</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+	</dict>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>LumaForge saves the wallpaper videos you export to your photo library.</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>lumaforge</string>
+			</array>
+		</dict>
+	</array>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>io.wallpaperengine.package</string>
+			<key>UTTypeDescription</key>
+			<string>Wallpaper Engine Package</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>pkg</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Wallpaper Engine Package</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>io.wallpaperengine.package</string>
+				<string>public.zip-archive</string>
+				<string>public.folder</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
