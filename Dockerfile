@@ -34,7 +34,7 @@ FROM debian:bookworm-slim AS steamugc
 
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /src
-RUN dpkg --add-architecture i386 && apt-get update && apt-get install -y --no-install-recommends ca-certificates curl g++ libc6:i386 lib32gcc-s1  && mkdir -p /opt/steamcmd /opt/steamredist /out  && curl -fsSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz | tar -xz -C /opt/steamcmd  && chmod +x /opt/steamcmd/steamcmd.sh  && /opt/steamcmd/steamcmd.sh +@ShutdownOnFailedCommand 1 +@NoPromptForPassword 1 +force_install_dir /opt/steamredist +login anonymous +app_update 1007 +quit  && find /opt/steamredist /opt/steamcmd -type f -name 'libsteam_api.so' -print -quit | xargs -r -I{} cp {} /out/libsteam_api.so  && test -s /out/libsteam_api.so
+RUN dpkg --add-architecture i386 && apt-get update && apt-get install -y --no-install-recommends ca-certificates curl g++ libc6:i386 lib32gcc-s1  && mkdir -p /opt/steamcmd /opt/steamredist /out  && curl -fsSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz | tar -xz -C /opt/steamcmd  && chmod +x /opt/steamcmd/steamcmd.sh  && /opt/steamcmd/steamcmd.sh +@ShutdownOnFailedCommand 1 +@NoPromptForPassword 1 +force_install_dir /opt/steamredist +login anonymous +app_update 1007 +quit  && find /opt/steamredist /opt/steamcmd -type f \( -name 'steam_api.so' -o -name 'libsteam_api.so' \) -print -quit | xargs -r -I{} cp {} /out/steam_api.so  && test -s /out/steam_api.so
 
 COPY server/steam_ugc_server.cpp /src/steam_ugc_server.cpp
 RUN g++ -std=c++17 -O2 -Wall -Wextra /src/steam_ugc_server.cpp -ldl -o /out/steam-ugc-server  && test -x /out/steam-ugc-server
@@ -85,7 +85,7 @@ COPY --from=lwebuilder /opt/linux-wallpaperengine /opt/linux-wallpaperengine
 
 RUN mkdir -p /opt/steam-ugc
 COPY --from=steamugc /out/steam-ugc-server /opt/steam-ugc/steam-ugc-server
-COPY --from=steamugc /out/libsteam_api.so /opt/steam-ugc/libsteam_api.so
+COPY --from=steamugc /out/steam_api.so /opt/steam-ugc/steam_api.so
 RUN chmod +x /opt/steam-ugc/steam-ugc-server
 
 COPY --from=depotbuilder /out/ /opt/depotdownloader/
