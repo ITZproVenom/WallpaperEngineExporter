@@ -28,7 +28,7 @@ MAX_AGE = int(os.getenv("WORK_MAX_AGE", "3600"))
 MAX_JOBS = int(os.getenv("MAX_JOBS", "1"))
 MAX_MEMORY_JOBS = int(os.getenv("MAX_MEMORY_JOBS", "100"))
 WORKSHOP_PROVIDER = os.getenv(
-    "WORKSHOP_PROVIDER", "swdl,ggnetwork,supabase,steamcmd"
+    "WORKSHOP_PROVIDER", "steamapi,swdl,ggnetwork,supabase,steamcmd"
 ).strip().lower()
 GGNETWORK_ENDPOINT = os.getenv("GGNETWORK_ENDPOINT", "https://api.ggntw.com/steam.request")
 SWDL_ENDPOINTS = [
@@ -201,6 +201,47 @@ def _materialize_provider_file(downloaded, target):
         name = "workshop" + (suffix if suffix else ".pkg")
     (content / name).write_bytes(data)
     return content
+
+
+def steam_api_download(workshop_id, target):
+    payload = urllib.parse.urlencode({
+        "itemcount": "1",
+        "publishedfileids[0]": workshop_id,
+    }).encode()
+    request = urllib.request.Request(
+        "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/",
+        data=payload,
+        method="POST",
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+            "User-Agent": "LumaForge/4.0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            data = json.loads(response.read().decode())
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"Steam API returned HTTP {exc.code}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Steam API network error: {exc.reason}") from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Steam API returned invalid JSON") from exc
+    details = ((data.get("response") or {}).get("publishedfiledetails") or []) if isinstance(data, dict) else []
+    if not details:
+        raise RuntimeError("Steam API returned no Workshop details")
+    item = details[0]
+    if str(item.get("result", "")) != "1":
+        raise RuntimeError(f"Steam API rejected Workshop item: {item.get('result')}")
+    download_url = item.get("file_url")
+    if not isinstance(download_url, str) or not download_url:
+        raise RuntimeError("Steam API has no direct file URL for this Workshop item")
+    parsed = urlparse(download_url)
+    if parsed.scheme == "http":
+        download_url = urllib.parse.urlunparse(parsed._replace(scheme="https"))
+    downloaded = target / "provider-download"
+    _download_url_to_file(download_url, downloaded)
+    return _materialize_provider_file(downloaded, target)
 
 
 def ggnetwork_download(workshop_id, target):
@@ -415,7 +456,7 @@ def acquire_workshop(workshop_id, target):
         provider_target = target / f"provider-{index}-{provider}"
         try:
             provider_target.mkdir(parents=True, exist_ok=True)
-            if provider == "supabase":
+            if provider == "steamapi":\n                content = steam_api_download(workshop_id, provider_target)\n            elif provider == "supabase":
                 content = supabase_resolver_download(workshop_id, provider_target)
             elif provider == "swdl":
                 content = steamworkshopdownloader_download(workshop_id, provider_target)
