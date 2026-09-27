@@ -108,7 +108,7 @@ jobs:
           set -euo pipefail
           CREATE="$(curl -fsS --max-time 30 -X POST https://lumaforge-worker.onrender.com/v1/jobs \
             -H 'Content-Type: application/json' \
-            -d '{"workshop_id":"3797216571"}')"
+            -d '{"workshop_id":"3592237763"}')"
           JOB_ID="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["job_id"])' <<<"$CREATE")"
           test -n "$JOB_ID"
           for _ in $(seq 1 540); do
