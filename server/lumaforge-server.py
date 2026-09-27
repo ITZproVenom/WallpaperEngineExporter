@@ -31,7 +31,7 @@ MAX_AGE = int(os.getenv("WORK_MAX_AGE", "3600"))
 MAX_JOBS = int(os.getenv("MAX_JOBS", "1"))
 MAX_MEMORY_JOBS = int(os.getenv("MAX_MEMORY_JOBS", "100"))
 WORKSHOP_PROVIDER = os.getenv(
-    "WORKSHOP_PROVIDER", "steamapi,steamgameserver,depotdownloader"
+    "WORKSHOP_PROVIDER", "steamapi,depotdownloader"
 ).strip().lower()
 GGNETWORK_ENDPOINT = os.getenv("GGNETWORK_ENDPOINT", "https://api.ggntw.com/steam.request")
 SWDL_ENDPOINTS = [
