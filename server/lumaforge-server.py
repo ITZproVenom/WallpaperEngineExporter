@@ -31,7 +31,7 @@ MAX_AGE = int(os.getenv("WORK_MAX_AGE", "3600"))
 MAX_JOBS = int(os.getenv("MAX_JOBS", "1"))
 MAX_MEMORY_JOBS = int(os.getenv("MAX_MEMORY_JOBS", "100"))
 WORKSHOP_PROVIDER = os.getenv(
-    "WORKSHOP_PROVIDER", "steamapi,swdl,ggnetwork,supabase,steamcmd"
+    "WORKSHOP_PROVIDER", "steamapi,steamgameserver,depotdownloader"
 ).strip().lower()
 GGNETWORK_ENDPOINT = os.getenv("GGNETWORK_ENDPOINT", "https://api.ggntw.com/steam.request")
 SWDL_ENDPOINTS = [
@@ -398,6 +398,20 @@ def depotdownloader_download(workshop_id, target):
     return content
 
 
+def steamgameserver_download(workshop_id, target):
+    helper = Path(os.getenv("STEAM_UGC_HELPER", "/opt/steam-ugc/steam-ugc-server"))
+    if not helper.is_file():
+        raise RuntimeError("Steam GameServer Workshop helper is not installed")
+    target.mkdir(parents=True, exist_ok=True)
+    try:
+        output = run([str(helper), workshop_id, str(target)], timeout=900)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("Steam GameServer Workshop download timed out") from exc
+    if not any(target.rglob("*")):
+        raise RuntimeError("Steam GameServer Workshop download produced no files; output=" + output[-5000:])
+    return target
+
+
 def steamcmd_download(workshop_id, target):
     username = os.environ.get("STEAM_USERNAME", "").strip()
     password = os.environ.get("STEAM_PASSWORD", "")
@@ -516,6 +530,8 @@ def acquire_workshop(workshop_id, target):
                 content = steamworkshopdownloader_download(workshop_id, provider_target)
             elif provider == "ggnetwork":
                 content = ggnetwork_download(workshop_id, provider_target)
+            elif provider == "steamgameserver":
+                content = steamgameserver_download(workshop_id, provider_target)
             elif provider == "depotdownloader":
                 content = depotdownloader_download(workshop_id, provider_target)
             elif provider == "steamcmd":
