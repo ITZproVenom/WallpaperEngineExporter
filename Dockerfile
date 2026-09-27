@@ -30,26 +30,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
  && dotnet publish /src/DepotDownloader/DepotDownloader.sln -c Release -o /out --self-contained false \
  && test -f /out/DepotDownloader.dll
 
-FROM debian:bookworm-slim AS steamugc
-
-ENV DEBIAN_FRONTEND=noninteractive
-WORKDIR /src
-RUN dpkg --add-architecture i386 && apt-get update && apt-get install -y --no-install-recommends ca-certificates curl g++ libc6:i386 lib32gcc-s1  && mkdir -p /opt/steamcmd /opt/steamredist /out  && curl -fsSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz | tar -xz -C /opt/steamcmd  && chmod +x /opt/steamcmd/steamcmd.sh  && /opt/steamcmd/steamcmd.sh +@ShutdownOnFailedCommand 1 +@NoPromptForPassword 1 +force_install_dir /opt/steamredist +login anonymous +app_update 1007 +quit  && find /opt/steamredist /opt/steamcmd -type f -name 'steam_api.so' -print -quit | xargs -r -I{} cp {} /out/steam_api.so  && test -s /out/steam_api.so
-
-COPY server/steam_ugc_server.cpp /src/steam_ugc_server.cpp
-RUN g++ -std=c++17 -O2 -Wall -Wextra /src/steam_ugc_server.cpp -ldl -o /out/steam-ugc-server  && test -x /out/steam-ugc-server
-
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV STEAMCMD=/opt/steamcmd/steamcmd.sh
 ENV DEPOT_DOWNLOADER=/opt/depotdownloader/DepotDownloader
-ENV STEAM_UGC_HELPER=/opt/steam-ugc/steam-ugc-server
-ENV LD_LIBRARY_PATH=/opt/steam-ugc
 ENV PORT=8080
 ENV WORK_ROOT=/tmp/lumaforge
 ENV MAX_JOBS=1
-ENV WORKSHOP_PROVIDER=steamapi,steamgameserver,depotdownloader
+ENV WORKSHOP_PROVIDER=steamapi,depotdownloader
 ENV MIN_MEDIA_DIMENSION=64
 ENV SCENE_RENDER_WIDTH=1280
 ENV SCENE_RENDER_HEIGHT=720
@@ -83,10 +72,6 @@ RUN dpkg --add-architecture i386 \
 
 COPY --from=lwebuilder /opt/linux-wallpaperengine /opt/linux-wallpaperengine
 
-RUN mkdir -p /opt/steam-ugc
-COPY --from=steamugc /out/steam-ugc-server /opt/steam-ugc/steam-ugc-server
-COPY --from=steamugc /out/steam_api.so /opt/steam-ugc/steam_api.so
-RUN chmod +x /opt/steam-ugc/steam-ugc-server
 
 COPY --from=depotbuilder /out/ /opt/depotdownloader/
 COPY --from=depotbuilder /usr/share/dotnet /usr/share/dotnet
