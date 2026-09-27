@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libwayland-dev wayland-protocols libegl1-mesa-dev libglfw3-dev libfftw3-dev libglm-dev \
  && rm -rf /var/lib/apt/lists/* \
  && git clone --depth 1 --recurse-submodules https://github.com/Almamu/linux-wallpaperengine.git /src/linux-wallpaperengine \
+ && sed -i '/#include <map>/a #include <memory>\n#include <optional>' /src/linux-wallpaperengine/src/WallpaperEngine/Media/MediaSource.h \
  && cmake -S /src/linux-wallpaperengine -B /src/linux-wallpaperengine/build -DCMAKE_BUILD_TYPE=Release \
  && cmake --build /src/linux-wallpaperengine/build --parallel 2 \
  && cmake --install /src/linux-wallpaperengine/build
