@@ -36,8 +36,9 @@ SWDL_ENDPOINTS = [
     u.strip().rstrip("/")
     for u in os.getenv(
         "SWDL_ENDPOINTS",
-        "https://node03.steamworkshopdownloader.io/prod/api/download,"
+        "https://backend-02-prd.steamworkshopdownloader.io/api/download,"
         "https://backend-01-prd.steamworkshopdownloader.io/api/download,"
+        "https://node03.steamworkshopdownloader.io/prod/api/download,"
         "https://api.steamworkshopdownloader.io/api/download",
     ).split(",")
     if u.strip()
@@ -317,7 +318,7 @@ def steamworkshopdownloader_download(workshop_id, target):
             payload = json.dumps({
                 "publishedFileId": int(workshop_id),
                 "collectionId": None, "extract": True,
-                "hidden": False, "direct": False, "autodownload": False,
+                "hidden": False, "direct": False, "autodownload": True,
             }).encode()
             request = urllib.request.Request(
                 endpoint + "/request", data=payload, method="POST",
