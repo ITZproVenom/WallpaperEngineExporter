@@ -11,9 +11,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
       libmpv-dev libpulse-dev libfreetype6-dev libdbus-1-dev \
       libwayland-dev wayland-protocols libegl1-mesa-dev libglfw3-dev libfftw3-dev libglm-dev libgmp-dev \
+      libnss3-dev libatk1.0-dev libatk-bridge2.0-dev libatspi2.0-dev \
+      libcups2-dev libpango1.0-dev libgtk-3-dev libgdk-pixbuf-2.0-dev \
+      libasound2-dev libxkbcommon-dev libxcomposite-dev libxdamage-dev libxfixes-dev libxext-dev libxrender-dev \
+      libdrm-dev libgbm-dev \
  && rm -rf /var/lib/apt/lists/* \
  && git clone --depth 1 --recurse-submodules https://github.com/Almamu/linux-wallpaperengine.git /src/linux-wallpaperengine \
- && sed -i '/#include <map>/a #include <memory>\n#include <optional>' /src/linux-wallpaperengine/src/WallpaperEngine/Media/MediaSource.h \
  && python3 /tmp/patch_lwe_sources.py \
  && cmake -S /src/linux-wallpaperengine -B /src/linux-wallpaperengine/build -DCMAKE_BUILD_TYPE=Release \
  && cmake --build /src/linux-wallpaperengine/build --parallel 2 \
@@ -81,4 +84,3 @@ COPY server/patch_lwe_sources.py /app/patch_lwe_sources.py
 COPY server/linux_wallpaperengine_renderer.py /app/linux_wallpaperengine_renderer.py
 EXPOSE 8080
 CMD ["python3", "/app/lumaforge-server.py"]
-
