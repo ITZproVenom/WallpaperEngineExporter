@@ -363,15 +363,15 @@ def steamworkshopdownloader_download(workshop_id, target):
 
 
 def steamcmd_download(workshop_id, target):
-    run([
+    run_output = run([
         STEAMCMD, "+@ShutdownOnFailedCommand", "1",
         "+@NoPromptForPassword", "1", "+force_install_dir", str(target),
         "+login", "anonymous", "+workshop_download_item", APP_ID, workshop_id,
-        "validate", "+quit",
+        "+quit",
     ], timeout=600)
     content = target / "steamapps" / "workshop" / "content" / APP_ID / workshop_id
     if not content.is_dir():
-        raise RuntimeError("SteamCMD returned no Workshop content")
+        raise RuntimeError("SteamCMD returned no Workshop content; output=" + run_output[-2500:])
     return content
 
 
